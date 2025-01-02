@@ -36,7 +36,7 @@
 
 #include <png.h>
 // Note: on some macOS platforms with a brew-installed libpng, use this instead:
-//#include <libpng16/png.h>
+// #include <libpng16/png.h>
 
 // Include the TileDB C++ API headers
 #include <tiledb/tiledb>
@@ -189,7 +189,7 @@ void create_array(
       .add_attribute(Attribute::create<uint8_t>(ctx, "alpha"));
 
   // Create the (empty) array on disk.
-  Array::create(array_path, schema);
+  Array::create(ctx, array_path, schema);
 }
 
 /**

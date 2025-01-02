@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,23 +31,48 @@
  * functions, declared in logger_public.h.
  */
 
-#include "tiledb/common/logger.h"
-
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/fmt/ostr.h>
 #include <spdlog/sinks/stdout_sinks.h>
+#include <spdlog/spdlog.h>
+
 #ifndef _WIN32
 #include <spdlog/sinks/stdout_color_sinks.h>
 #endif
 
+#include "tiledb/common/logger.h"
+
 namespace tiledb::common {
+
+spdlog::level::level_enum to_spdlog_level(Logger::Level lvl) {
+  switch (lvl) {
+    case Logger::Level::FATAL:
+      return spdlog::level::critical;
+    case Logger::Level::ERR:
+      return spdlog::level::err;
+    case Logger::Level::WARN:
+      return spdlog::level::warn;
+    case Logger::Level::INFO:
+      return spdlog::level::info;
+    case Logger::Level::DBG:
+      return spdlog::level::debug;
+    default:
+      assert(lvl == Logger::Level::TRACE);
+      return spdlog::level::trace;
+  }
+}
 
 /* ********************************* */
 /*     CONSTRUCTORS & DESTRUCTORS    */
 /* ********************************* */
 
-Logger::Logger(const std::string& name, const Logger::Format format)
-    : name_(name) {
+Logger::Logger(
+    const std::string& name,
+    const Logger::Level level,
+    const Logger::Format format,
+    const bool root)
+    : name_(name)
+    , root_(root) {
   logger_ = spdlog::get(name_);
   if (logger_ == nullptr) {
 #ifdef _WIN32
@@ -56,24 +81,24 @@ Logger::Logger(const std::string& name, const Logger::Format format)
     logger_ = spdlog::stdout_color_mt(name_);
 #endif
   }
-  set_format(format);
-  set_level(Logger::Level::ERR);
-  if (++instance_count == 1 && format == Logger::Format::JSON) {
+  if (root && format == Logger::Format::JSON) {
     // If this is the first logger created set up the opening brace and an
     // array named "log"
     logger_->set_pattern("{\n \"log\": [");
     logger_->critical("");
   }
+  set_level(level);
+  set_format(format);
 }
 
-Logger::Logger(tdb_shared_ptr<spdlog::logger> logger) {
+Logger::Logger(shared_ptr<spdlog::logger> logger) {
   logger_ = std::move(logger);
 }
 
 Logger::~Logger() {
-  if (--instance_count == 0 && fmt_ == Logger::Format::JSON) {
-    // If this is the last logger being destroyed, set the same log format,
-    // without the "," at the end
+  if (root_ && fmt_ == Logger::Format::JSON) {
+    // If this is the root/global logger being destroyed, then we output
+    // "Logging finished"
     std::string last_log_pattern = {
         "{\"severity\":\"%l\",\"timestamp\":\"%Y-%m-%dT%H:%M:%S.%f%z\","
         "\"process\":\"%P\",\"name\":{%n},\"message\":\"%v\"}"};
@@ -117,6 +142,10 @@ void Logger::fatal(const char* msg) {
   exit(1);
 }
 
+void Logger::log(Logger::Level level, const char* msg) {
+  logger_->log(to_spdlog_level(level), msg);
+}
+
 Status Logger::status(const Status& st) {
   logger_->error(st.message());
   return st;
@@ -151,6 +180,10 @@ void Logger::fatal(const std::string& msg) {
   exit(1);
 }
 
+void Logger::log(Logger::Level level, const std::string& msg) {
+  logger_->log(to_spdlog_level(level), msg);
+}
+
 void Logger::trace(const std::stringstream& msg) {
   logger_->trace(msg.str());
 }
@@ -178,6 +211,14 @@ void Logger::critical(const std::stringstream& msg) {
 void Logger::fatal(const std::stringstream& msg) {
   logger_->error(msg.str());
   exit(1);
+}
+
+void Logger::log(Logger::Level level, const std::stringstream& msg) {
+  logger_->log(to_spdlog_level(level), msg.str());
+}
+
+bool Logger::should_log(Logger::Level lvl) {
+  return logger_->should_log(to_spdlog_level(lvl));
 }
 
 void Logger::set_level(Logger::Level lvl) {
@@ -248,12 +289,10 @@ void Logger::set_name(const std::string& tags) {
   name_ = tags;
 }
 
-tdb_shared_ptr<Logger> Logger::clone(const std::string& tag, uint64_t id) {
+shared_ptr<Logger> Logger::clone(const std::string& tag, uint64_t id) {
   std::string new_tags = add_tag(tag, id);
-  auto new_logger =
-      tiledb::common::make_shared<Logger>(HERE(), logger_->clone(new_tags));
+  auto new_logger = make_shared<Logger>(HERE(), logger_->clone(new_tags));
   new_logger->set_name(new_tags);
-  ++instance_count;
   return new_logger;
 }
 
@@ -276,11 +315,20 @@ std::string Logger::add_tag(const std::string& tag, uint64_t id) {
 /*              GLOBAL               */
 /* ********************************* */
 
+std::string global_logger_name(const Logger::Format format) {
+  std::string name{
+      std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count()) +
+      "-Global"};
+  if (format != Logger::Format::JSON) {
+    return name;
+  }
+  return {"\"" + name + "\":\"1\""};
+}
+
 Logger& global_logger(Logger::Format format) {
-  static std::string name = (format == Logger::Format::JSON) ?
-                                Logger::global_logger_json_name :
-                                Logger::global_logger_default_name;
-  static Logger l(name, format);
+  static Logger l(global_logger_name(format), Logger::Level::ERR, format, true);
   return l;
 }
 
@@ -315,10 +363,14 @@ Status LOG_STATUS(const Status& st) {
   return st;
 }
 
-/** Logs an error and exits with a non-zero status. */
-void LOG_FATAL(const std::string& msg) {
-  global_logger().error(msg);
-  exit(1);
+/** Logs a status without returning it. */
+void LOG_STATUS_NO_RETURN_VALUE(const Status& st) {
+  global_logger().error(st.to_string());
+}
+
+/** Logs a status. */
+void LOG_STATUS(const StatusException& se) {
+  global_logger().error(se.what());
 }
 
 /** Logs a trace. */
@@ -344,12 +396,6 @@ void LOG_WARN(const std::stringstream& msg) {
 /** Logs an error. */
 void LOG_ERROR(const std::stringstream& msg) {
   global_logger().error(msg);
-}
-
-/** Logs an error and exits with a non-zero status. */
-void LOG_FATAL(const std::stringstream& msg) {
-  global_logger().error(msg);
-  exit(1);
 }
 
 }  // namespace tiledb::common

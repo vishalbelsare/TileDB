@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,6 +35,10 @@
 #include "tiledb/common/logger.h"
 #include "tiledb/sm/array/array.h"
 #include "tiledb/sm/array_schema/array_schema.h"
+#include "tiledb/sm/misc/tdb_time.h"
+#include "tiledb/sm/query/iquery_strategy.h"
+#include "tiledb/sm/query/query_buffer.h"
+#include "tiledb/sm/query/query_state.h"
 
 namespace tiledb {
 namespace sm {
@@ -44,32 +48,27 @@ namespace sm {
 /* ****************************** */
 
 StrategyBase::StrategyBase(
-    stats::Stats* stats,
-    tdb_shared_ptr<Logger> logger,
-    StorageManager* storage_manager,
-    Array* array,
-    Config& config,
-    std::unordered_map<std::string, QueryBuffer>& buffers,
-    Subarray& subarray,
-    Layout layout)
-    : stats_(stats)
+    stats::Stats* stats, shared_ptr<Logger> logger, StrategyParams& params)
+    : resources_(params.resources())
+    , array_memory_tracker_(params.array_memory_tracker())
+    , query_memory_tracker_(params.query_memory_tracker())
+    , stats_(stats)
     , logger_(logger)
-    , array_(array)
-    , config_(config)
-    , buffers_(buffers)
-    , layout_(layout)
-    , storage_manager_(storage_manager)
-    , subarray_(subarray)
+    , array_(params.array())
+    , array_schema_(params.array()->array_schema_latest())
+    , config_(params.config())
+    , buffers_(params.buffers())
+    , layout_(params.layout())
+    , query_state_machine_(params.query_state_machine())
+    , cancellation_source_(params.cancellation_source())
+    , subarray_(params.subarray())
     , offsets_format_mode_(Config::SM_OFFSETS_FORMAT_MODE)
     , offsets_extra_element_(false)
     , offsets_bitsize_(constants::cell_var_offset_size * 8) {
-  if (array != nullptr) {
-    array_schema_ = array->array_schema_latest();
-  }
 }
 
-stats::Stats* StrategyBase::stats() const {
-  return stats_;
+void StrategyBase::set_stats(const stats::StatsData& data) {
+  stats_->populate_with_data(data);
 }
 
 /* ****************************** */
@@ -79,15 +78,15 @@ stats::Stats* StrategyBase::stats() const {
 void StrategyBase::get_dim_attr_stats() const {
   for (const auto& it : buffers_) {
     const auto& name = it.first;
-    auto var_size = array_schema_->var_size(name);
-    if (array_schema_->is_attr(name)) {
+    auto var_size = array_schema_.var_size(name);
+    if (array_schema_.is_attr(name)) {
       stats_->add_counter("attr_num", 1);
       if (var_size) {
         stats_->add_counter("attr_var_num", 1);
       } else {
         stats_->add_counter("attr_fixed_num", 1);
       }
-      if (array_schema_->is_nullable(name)) {
+      if (array_schema_.is_nullable(name)) {
         stats_->add_counter("attr_nullable_num", 1);
       }
     } else {
@@ -102,6 +101,26 @@ void StrategyBase::get_dim_attr_stats() const {
         }
       }
     }
+  }
+}
+
+void StrategyBase::throw_if_cancelled() const {
+  if (cancellation_source_.cancellation_in_progress()) {
+    throw QueryException("Query was cancelled");
+  }
+}
+
+void StrategyBase::cancel() {
+  query_state_machine_.event(LocalQueryEvent::cancel);
+}
+
+bool StrategyBase::cancelled() const {
+  return query_state_machine_.is_cancelled();
+}
+
+void StrategyBase::process_external_cancellation() {
+  if (cancellation_source_.cancellation_in_progress()) {
+    cancel();
   }
 }
 
@@ -131,7 +150,7 @@ uint32_t StrategyBase::offsets_bitsize() const {
 
 Status StrategyBase::set_offsets_bitsize(const uint32_t bitsize) {
   if (bitsize != 32 && bitsize != 64) {
-    return logger_->status(Status::ReaderError(
+    return logger_->status(Status_ReaderError(
         "Cannot set offset bitsize to " + std::to_string(bitsize) +
         "; Only 32 and 64 are acceptable bitsize values"));
   }

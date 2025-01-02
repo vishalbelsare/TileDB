@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,9 +30,9 @@
  * Tests the `Subarray` class.
  */
 
-#include "test/src/helpers.h"
-#include "test/src/vfs_helpers.h"
-#include "tiledb/sm/c_api/tiledb_struct_def.h"
+#include "test/support/src/helpers.h"
+#include "test/support/src/vfs_helpers.h"
+#include "tiledb/api/c_api/array/array_api_internal.h"
 #include "tiledb/sm/subarray/subarray_partitioner.h"
 
 #ifdef _WIN32
@@ -41,7 +41,7 @@
 #include "tiledb/sm/filesystem/posix.h"
 #endif
 
-#include <catch.hpp>
+#include <test/support/tdb_catch.h>
 #include <iostream>
 
 using namespace tiledb::sm;
@@ -124,8 +124,8 @@ TEST_CASE_METHOD(
   Subarray subarray;
   SubarrayRanges<uint64_t> ranges = {{5, 7, 6, 15, 33, 43}};
   Layout subarray_layout = Layout::ROW_MAJOR;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray);
-  subarray.compute_tile_coords<uint64_t>();
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray);
+  CHECK_NOTHROW(subarray.compute_tile_coords<uint64_t>());
 
   // Prepare correct tile coordinates
   std::vector<std::vector<uint8_t>> c_tile_coords;
@@ -247,8 +247,8 @@ TEST_CASE_METHOD(
   Subarray subarray;
   SubarrayRanges<uint64_t> ranges = {{2, 2, 6, 10}, {2, 6, 5, 10}};
   Layout subarray_layout = Layout::ROW_MAJOR;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray);
-  subarray.compute_tile_coords<uint64_t>();
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray);
+  CHECK_NOTHROW(subarray.compute_tile_coords<uint64_t>());
 
   auto tile_coords = subarray.tile_coords();
   CHECK(tile_coords == c_tile_coords);
@@ -300,7 +300,7 @@ TEST_CASE_METHOD(
   Subarray subarray;
   SubarrayRanges<uint64_t> ranges = {{2, 10, 6, 10}, {2, 6, 5, 10}};
   Layout subarray_layout = Layout::ROW_MAJOR;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray);
 
   std::vector<uint64_t> tile_coords = {1, 0};
   std::vector<uint64_t> c_range_0_0 = {3, 4};
@@ -310,12 +310,15 @@ TEST_CASE_METHOD(
       subarray.crop_to_tile(&tile_coords[0], Layout::ROW_MAJOR);
   const Range* range = nullptr;
   CHECK(cropped_subarray.range_num() == 2);
-  CHECK(cropped_subarray.get_range(0, 0, &range).ok());
+  CHECK_NOTHROW(cropped_subarray.get_range(0, 0, &range));
   CHECK(!memcmp(range->data(), &c_range_0_0[0], 2 * sizeof(uint64_t)));
-  CHECK(cropped_subarray.get_range(1, 0, &range).ok());
+  CHECK_NOTHROW(cropped_subarray.get_range(1, 0, &range));
   CHECK(!memcmp(range->data(), &c_range_1_0[0], 2 * sizeof(uint64_t)));
-  CHECK(cropped_subarray.get_range(1, 1, &range).ok());
+  CHECK_NOTHROW(cropped_subarray.get_range(1, 1, &range));
   CHECK(!memcmp(range->data(), &c_range_1_1[0], 2 * sizeof(uint64_t)));
+
+  auto tile_cell_num = subarray.tile_cell_num(&tile_coords[0]);
+  CHECK(tile_cell_num == cropped_subarray.cell_num());
 
   close_array(ctx_, array_);
 }
@@ -407,7 +410,7 @@ TEST_CASE_METHOD(
   }
   SubarrayRanges<uint64_t> ranges = {d1_ranges, d2_ranges};
   Layout subarray_layout = Layout::ROW_MAJOR;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray, false);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray, false);
 
   // We must compute range offsets before invoking
   // `get_expanded_coordinates`.
@@ -482,7 +485,7 @@ TEST_CASE_METHOD(
   }
   SubarrayRanges<uint64_t> ranges = {d1_ranges, d2_ranges};
   Layout subarray_layout = Layout::COL_MAJOR;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray, false);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray, false);
 
   // We must compute range offsets before invoking
   // `get_expanded_coordinates`.
@@ -557,7 +560,7 @@ TEST_CASE_METHOD(
   }
   SubarrayRanges<uint64_t> ranges = {d1_ranges, d2_ranges};
   Layout subarray_layout = Layout::UNORDERED;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray, false);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray, false);
 
   // We must compute range offsets before invoking
   // `get_expanded_coordinates`.
@@ -701,7 +704,7 @@ TEST_CASE_METHOD(
   }
   SubarrayRanges<uint64_t> ranges = {d1_ranges, d2_ranges, d3_ranges};
   Layout subarray_layout = Layout::ROW_MAJOR;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray, false);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray, false);
 
   // We must compute range offsets before invoking
   // `get_expanded_coordinates`.
@@ -800,7 +803,7 @@ TEST_CASE_METHOD(
   }
   SubarrayRanges<uint64_t> ranges = {d1_ranges, d2_ranges, d3_ranges};
   Layout subarray_layout = Layout::COL_MAJOR;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray, false);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray, false);
 
   // We must compute range offsets before invoking
   // `get_expanded_coordinates`.
@@ -899,7 +902,7 @@ TEST_CASE_METHOD(
   }
   SubarrayRanges<uint64_t> ranges = {d1_ranges, d2_ranges, d3_ranges};
   Layout subarray_layout = Layout::UNORDERED;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray, false);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray, false);
 
   // We must compute range offsets before invoking
   // `get_expanded_coordinates`.
@@ -924,4 +927,46 @@ TEST_CASE_METHOD(
       &subarray, 37, 57, 32, 63, {2, 0, 0}, {3, 3, 3});
 
   close_array(ctx_, array_);
+}
+
+TEST_CASE_METHOD(
+    SubarrayFx, "Subarray: round-trip attribute ranges", "[Subarray]") {
+  // Create array
+  uint64_t domain[2]{0, 3};
+  uint64_t tile_extent{4};
+  create_array(
+      ctx_,
+      array_name_,
+      TILEDB_DENSE,
+      {"x"},
+      {TILEDB_UINT64},
+      {domain},
+      {&tile_extent},
+      {"a", "b"},
+      {TILEDB_INT64, TILEDB_FLOAT64},
+      {1, 1},
+      {tiledb::test::Compressor(TILEDB_FILTER_LZ4, -1),
+       tiledb::test::Compressor(TILEDB_FILTER_LZ4, -1)},
+      TILEDB_ROW_MAJOR,
+      TILEDB_ROW_MAJOR,
+      4);
+  open_array(ctx_, array_, TILEDB_READ);
+
+  // Create subarray
+  tiledb_subarray_t* subarray;
+  tiledb_subarray_alloc(ctx_, array_, &subarray);
+
+  // Set attribute ranges
+  int64_t range_data[6]{-10, -8, -5, 0, -2, 7};
+  std::vector<Range> input_ranges{
+      Range(&range_data[0], &range_data[1], sizeof(int64_t)),
+      Range(&range_data[2], &range_data[3], sizeof(int64_t)),
+      Range(&range_data[4], &range_data[5], sizeof(int64_t))};
+  subarray->set_attribute_ranges("b", input_ranges);
+
+  // Get attribute ranges and verify results
+  const auto& output_ranges = subarray->get_attribute_ranges("b");
+  for (uint32_t ii = 0; ii < 3; ++ii) {
+    CHECK(input_ranges[ii] == output_ranges[ii]);
+  }
 }

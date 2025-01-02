@@ -60,19 +60,15 @@ namespace serialization {
 #ifdef TILEDB_SERIALIZATION
 
 Status config_to_capnp(
-    const Config* config, capnp::Config::Builder* config_builder) {
-  if (config == nullptr)
-    return LOG_STATUS(Status::SerializationError(
-        "Error serializing config; config is null."));
-
-  auto entries = config_builder->initEntries(config->param_values().size());
+    const Config& config, capnp::Config::Builder* config_builder) {
+  auto config_params = config.get_all_params_from_config_or_env();
+  auto entries = config_builder->initEntries(config_params.size());
   uint64_t i = 0;
-  for (const auto& kv : config->param_values()) {
+  for (const auto& kv : config_params) {
     entries[i].setKey(kv.first);
     entries[i].setValue(kv.second);
     ++i;
   }
-
   return Status::Ok();
 }
 
@@ -83,59 +79,66 @@ Status config_from_capnp(
 
   if (config_reader.hasEntries()) {
     auto entries = config_reader.getEntries();
+    bool found_refactored_reader_config = false;
     for (const auto kv : entries) {
-      RETURN_NOT_OK((*config)->set(kv.getKey().cStr(), kv.getValue().cStr()));
+      auto key = std::string_view{kv.getKey().cStr(), kv.getKey().size()};
+      auto value = std::string_view{kv.getValue().cStr(), kv.getValue().size()};
+      RETURN_NOT_OK((*config)->set(std::string{key}, std::string{value}));
+      if (key == "sm.query.dense.reader" ||
+          key == "sm.query.sparse_global_order.reader" ||
+          key == "sm.query.sparse_unordered_with_dups.reader")
+        found_refactored_reader_config = true;
+    }
+
+    // If we are on a pre TileDB 2.4 client, they will not have the reader
+    // options set. For those cases we need to set the reader to the legacy
+    // option
+    if (!found_refactored_reader_config) {
+      RETURN_NOT_OK((*config)->set("sm.query.dense.reader", "legacy"));
+      RETURN_NOT_OK(
+          (*config)->set("sm.query.sparse_global_order.reader", "legacy"));
+      RETURN_NOT_OK((*config)->set(
+          "sm.query.sparse_unordered_with_dups.reader", "legacy"));
     }
   }
   return Status::Ok();
 }
 
 Status config_serialize(
-    Config* config,
+    const Config& config,
     SerializationType serialize_type,
-    Buffer* serialized_buffer,
-    const bool client_side) {
+    SerializationBuffer& serialized_buffer,
+    const bool) {
   try {
     ::capnp::MallocMessageBuilder message;
     capnp::Config::Builder configBuilder = message.initRoot<capnp::Config>();
     RETURN_NOT_OK(config_to_capnp(config, &configBuilder));
 
-    serialized_buffer->reset_size();
-    serialized_buffer->reset_offset();
-
     switch (serialize_type) {
       case SerializationType::JSON: {
         ::capnp::JsonCodec json;
         kj::String capnp_json = json.encode(configBuilder);
-        const auto json_len = capnp_json.size();
-        const char nul = '\0';
-        // size does not include needed null terminator, so add +1
-        RETURN_NOT_OK(serialized_buffer->realloc(json_len + 1));
-        RETURN_NOT_OK(serialized_buffer->write(capnp_json.cStr(), json_len));
-        RETURN_NOT_OK(serialized_buffer->write(&nul, 1));
+        serialized_buffer.assign(capnp_json);
         break;
       }
       case SerializationType::CAPNP: {
         kj::Array<::capnp::word> protomessage = messageToFlatArray(message);
-        kj::ArrayPtr<const char> message_chars = protomessage.asChars();
-        const auto nbytes = message_chars.size();
-        RETURN_NOT_OK(serialized_buffer->realloc(nbytes));
-        RETURN_NOT_OK(serialized_buffer->write(message_chars.begin(), nbytes));
+        serialized_buffer.assign(protomessage.asChars());
         break;
       }
       default: {
-        return LOG_STATUS(Status::SerializationError(
+        return LOG_STATUS(Status_SerializationError(
             "Error serializing config; Unknown serialization type "
             "passed"));
       }
     }
 
   } catch (kj::Exception& e) {
-    return LOG_STATUS(Status::SerializationError(
+    return LOG_STATUS(Status_SerializationError(
         "Error serializing config; kj::Exception: " +
         std::string(e.getDescription().cStr())));
   } catch (std::exception& e) {
-    return LOG_STATUS(Status::SerializationError(
+    return LOG_STATUS(Status_SerializationError(
         "Error serializing config; exception " + std::string(e.what())));
   }
 
@@ -145,19 +148,16 @@ Status config_serialize(
 Status config_deserialize(
     Config** config,
     SerializationType serialize_type,
-    const Buffer& serialized_buffer) {
+    span<const char> serialized_buffer) {
   try {
     tdb_unique_ptr<Config> decoded_config = nullptr;
 
     switch (serialize_type) {
       case SerializationType::JSON: {
-        ::capnp::JsonCodec json;
         ::capnp::MallocMessageBuilder message_builder;
         capnp::Config::Builder config_builder =
             message_builder.initRoot<capnp::Config>();
-        json.decode(
-            kj::StringPtr(static_cast<const char*>(serialized_buffer.data())),
-            config_builder);
+        utils::decode_json_message(serialized_buffer, config_builder);
         capnp::Config::Reader config_reader = config_builder.asReader();
         RETURN_NOT_OK(config_from_capnp(config_reader, &decoded_config));
         break;
@@ -173,23 +173,23 @@ Status config_deserialize(
         break;
       }
       default: {
-        return LOG_STATUS(Status::SerializationError(
+        return LOG_STATUS(Status_SerializationError(
             "Error deserializing config; Unknown serialization type "
             "passed"));
       }
     }
 
     if (decoded_config == nullptr)
-      return LOG_STATUS(Status::SerializationError(
+      return LOG_STATUS(Status_SerializationError(
           "Error serializing config; deserialized config is null"));
 
     *config = decoded_config.release();
   } catch (kj::Exception& e) {
-    return LOG_STATUS(Status::SerializationError(
+    return LOG_STATUS(Status_SerializationError(
         "Error deserializing config; kj::Exception: " +
         std::string(e.getDescription().cStr())));
   } catch (std::exception& e) {
-    return LOG_STATUS(Status::SerializationError(
+    return LOG_STATUS(Status_SerializationError(
         "Error deserializing config; exception " + std::string(e.what())));
   }
 
@@ -198,13 +198,14 @@ Status config_deserialize(
 
 #else
 
-Status config_serialize(Config*, SerializationType, Buffer*, const bool) {
-  return LOG_STATUS(Status::SerializationError(
+Status config_serialize(
+    const Config&, SerializationType, SerializationBuffer&, const bool) {
+  return LOG_STATUS(Status_SerializationError(
       "Cannot serialize; serialization not enabled."));
 }
 
-Status config_deserialize(Config**, SerializationType, const Buffer&) {
-  return LOG_STATUS(Status::SerializationError(
+Status config_deserialize(Config**, SerializationType, span<const char>) {
+  return LOG_STATUS(Status_SerializationError(
       "Cannot deserialize; serialization not enabled."));
 }
 

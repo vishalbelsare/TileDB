@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  * @copyright Copyright (c) 2016 MIT and Intel Corporation
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -34,82 +34,16 @@
 #ifndef TILEDB_C_API_STRUCT_DEF_H
 #define TILEDB_C_API_STRUCT_DEF_H
 
-#include "tiledb/sm/array/array.h"
+#include "tiledb/api/c_api_support/handle/handle.h"
 #include "tiledb/sm/array_schema/array_schema.h"
-#include "tiledb/sm/array_schema/array_schema_evolution.h"
 #include "tiledb/sm/buffer/buffer_list.h"
-#include "tiledb/sm/config/config.h"
-#include "tiledb/sm/config/config_iter.h"
+#include "tiledb/sm/consolidation_plan/consolidation_plan.h"
 #include "tiledb/sm/filesystem/vfs_file_handle.h"
-#include "tiledb/sm/filter/compression_filter.h"
-#include "tiledb/sm/filter/filter_pipeline.h"
-#include "tiledb/sm/fragment/fragment_info.h"
+#include "tiledb/sm/group/group.h"
 #include "tiledb/sm/query/query.h"
 #include "tiledb/sm/query/query_condition.h"
+#include "tiledb/sm/query/update_value.h"
 #include "tiledb/sm/storage_manager/context.h"
-#include "tiledb/sm/subarray/subarray.h"
-#include "tiledb/sm/subarray/subarray_partitioner.h"
-
-struct tiledb_array_t {
-  tiledb::sm::Array* array_ = nullptr;
-};
-
-struct tiledb_subarray_t {
-  tiledb::sm::Subarray* subarray_ = nullptr;
-};
-
-struct tiledb_buffer_t {
-  tiledb::sm::Datatype datatype_ = tiledb::sm::Datatype::UINT8;
-  tiledb::sm::Buffer* buffer_ = nullptr;
-};
-
-struct tiledb_buffer_list_t {
-  tiledb::sm::BufferList* buffer_list_ = nullptr;
-};
-
-struct tiledb_config_t {
-  tiledb::sm::Config* config_ = nullptr;
-};
-
-struct tiledb_config_iter_t {
-  tiledb::sm::ConfigIter* config_iter_ = nullptr;
-};
-
-struct tiledb_ctx_t {
-  tiledb::sm::Context* ctx_ = nullptr;
-};
-
-struct tiledb_error_t {
-  std::string errmsg_;
-};
-
-struct tiledb_attribute_t {
-  tiledb::sm::Attribute* attr_ = nullptr;
-};
-
-struct tiledb_array_schema_t {
-  tiledb::sm::ArraySchema* array_schema_ = nullptr;
-};
-
-struct tiledb_array_schema_evolution_t {
-  tiledb::sm::ArraySchemaEvolution* array_schema_evolution_ = nullptr;
-};
-
-struct tiledb_dimension_t {
-  tiledb::sm::Dimension* dim_ = nullptr;
-};
-
-struct tiledb_domain_t {
-  tiledb::sm::Domain* domain_ = nullptr;
-};
-
-struct tiledb_filter_t {
-  tiledb::sm::Filter* filter_ = nullptr;
-};
-
-struct tiledb_filter_list_t {
-  tiledb::sm::FilterPipeline* pipeline_ = nullptr;
-};
 
 struct tiledb_query_t {
   tiledb::sm::Query* query_ = nullptr;
@@ -119,16 +53,8 @@ struct tiledb_query_condition_t {
   tiledb::sm::QueryCondition* query_condition_ = nullptr;
 };
 
-struct tiledb_vfs_t {
-  tiledb::sm::VFS* vfs_ = nullptr;
-};
-
-struct tiledb_vfs_fh_t {
-  tiledb::sm::VFSFileHandle* vfs_fh_ = nullptr;
-};
-
-struct tiledb_fragment_info_t {
-  tiledb::sm::FragmentInfo* fragment_info_ = nullptr;
+struct tiledb_consolidation_plan_t {
+  shared_ptr<tiledb::sm::ConsolidationPlan> consolidation_plan_ = nullptr;
 };
 
 #endif

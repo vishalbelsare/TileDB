@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,74 +30,61 @@
  * This file defines class Filter.
  */
 
-#include "tiledb/sm/filter/filter.h"
-#include "tiledb/common/heap_memory.h"
-#include "tiledb/common/logger.h"
+#include "filter.h"
+#include "tiledb/common/common.h"
+#include "tiledb/common/logger_public.h"
 #include "tiledb/sm/buffer/buffer.h"
+#include "tiledb/sm/enums/datatype.h"
 #include "tiledb/sm/enums/filter_type.h"
-#include "tiledb/sm/filter/bit_width_reduction_filter.h"
-#include "tiledb/sm/filter/bitshuffle_filter.h"
-#include "tiledb/sm/filter/byteshuffle_filter.h"
-#include "tiledb/sm/filter/checksum_md5_filter.h"
-#include "tiledb/sm/filter/checksum_sha256_filter.h"
-#include "tiledb/sm/filter/compression_filter.h"
-#include "tiledb/sm/filter/encryption_aes256gcm_filter.h"
-#include "tiledb/sm/filter/noop_filter.h"
-#include "tiledb/sm/filter/positive_delta_filter.h"
 
 using namespace tiledb::common;
 
 namespace tiledb {
 namespace sm {
 
-Filter::Filter(FilterType type) {
-  pipeline_ = nullptr;
+Filter::Filter(FilterType type, Datatype filter_data_type) {
   type_ = type;
+  filter_data_type_ = filter_data_type;
 }
 
 Filter* Filter::clone() const {
   // Call subclass-specific clone function
   auto clone = clone_impl();
-  // Ensure the clone does not "belong" to any pipeline.
-  clone->pipeline_ = nullptr;
+  clone->filter_data_type_ = filter_data_type_;
   return clone;
 }
 
-Filter* Filter::create(FilterType type) {
-  switch (type) {
-    case FilterType::FILTER_NONE:
-      return tdb_new(NoopFilter);
-    case FilterType::FILTER_GZIP:
-    case FilterType::FILTER_ZSTD:
-    case FilterType::FILTER_LZ4:
-    case FilterType::FILTER_RLE:
-    case FilterType::FILTER_BZIP2:
-    case FilterType::FILTER_DOUBLE_DELTA:
-      return tdb_new(CompressionFilter, type, -1);
-    case FilterType::FILTER_BIT_WIDTH_REDUCTION:
-      return tdb_new(BitWidthReductionFilter);
-    case FilterType::FILTER_BITSHUFFLE:
-      return tdb_new(BitshuffleFilter);
-    case FilterType::FILTER_BYTESHUFFLE:
-      return tdb_new(ByteshuffleFilter);
-    case FilterType::FILTER_POSITIVE_DELTA:
-      return tdb_new(PositiveDeltaFilter);
-    case FilterType::INTERNAL_FILTER_AES_256_GCM:
-      return tdb_new(EncryptionAES256GCMFilter);
-    case FilterType::FILTER_CHECKSUM_MD5:
-      return tdb_new(ChecksumMD5Filter);
-    case FilterType::FILTER_CHECKSUM_SHA256:
-      return tdb_new(ChecksumSHA256Filter);
-    default:
-      assert(false);
-      return nullptr;
+Filter* Filter::clone(const Datatype data_type) const {
+  // Call subclass-specific clone function
+  auto clone = clone_impl();
+  clone->filter_data_type_ = data_type;
+  return clone;
+}
+
+Datatype Filter::output_datatype(Datatype datatype) const {
+  return datatype;
+}
+
+void Filter::ensure_accepts_datatype(Datatype datatype) const {
+  if (this->type() == FilterType::FILTER_NONE) {
+    return;
+  }
+
+  if (!this->accepts_input_datatype(datatype)) {
+    throw FilterStatusException(
+        "Filter " + filter_type_str(this->type()) +
+        " does not accept input type " + datatype_str(datatype));
   }
 }
+
+bool Filter::accepts_input_datatype(Datatype) const {
+  return true;
+};
 
 Status Filter::get_option(FilterOption option, void* value) const {
   if (value == nullptr)
     return LOG_STATUS(
-        Status::FilterError("Cannot get option; null value pointer"));
+        Status_FilterError("Cannot get option; null value pointer"));
 
   return get_option_impl(option, value);
 }
@@ -106,88 +93,49 @@ Status Filter::set_option(FilterOption option, const void* value) {
   return set_option_impl(option, value);
 }
 
-Status Filter::deserialize(ConstBuffer* buff, Filter** filter) {
-  uint8_t type;
-  RETURN_NOT_OK(buff->read(&type, sizeof(uint8_t)));
-  uint32_t filter_metadata_len;
-  RETURN_NOT_OK(buff->read(&filter_metadata_len, sizeof(uint32_t)));
-
-  auto* f = create(static_cast<FilterType>(type));
-  if (f == nullptr)
-    return LOG_STATUS(Status::FilterError("Deserialization error."));
-
-  auto offset = buff->offset();
-  RETURN_NOT_OK_ELSE(f->deserialize_impl(buff), tdb_delete(f));
-
-  if (buff->offset() - offset != filter_metadata_len) {
-    tdb_delete(f);
-    return LOG_STATUS(Status::FilterError(
-        "Deserialization error; unexpected metadata length"));
-  }
-
-  *filter = f;
-
-  return Status::Ok();
-}
-
 // ===== FORMAT =====
 // filter type (uint8_t)
 // filter metadata num bytes (uint32_t -- may be 0)
 // filter metadata (char[])
-Status Filter::serialize(Buffer* buff) const {
+void Filter::serialize(Serializer& serializer) const {
   auto type = static_cast<uint8_t>(type_);
-  RETURN_NOT_OK(buff->write(&type, sizeof(uint8_t)));
-
-  // Save a pointer to store the actual length of the metadata.
-  uint32_t metadata_len = 0;
-  auto metadata_length_offset = buff->offset();
-  RETURN_NOT_OK(buff->write(&metadata_len, sizeof(uint32_t)));
-
-  // Filter-specific serialization
-  uint64_t buff_size = buff->size();
-  RETURN_NOT_OK(serialize_impl(buff));
+  serializer.write<uint8_t>(type);
 
   // Compute and write metadata length
-  if (buff->size() < buff_size ||
-      buff->size() - buff_size > std::numeric_limits<uint32_t>::max())
-    return LOG_STATUS(
-        Status::FilterError("Filter metadata exceeds max length"));
-  metadata_len = static_cast<uint32_t>(buff->size() - buff_size);
-  std::memcpy(
-      buff->data(metadata_length_offset), &metadata_len, sizeof(uint32_t));
+  SizeComputationSerializer size_computation_serializer;
+  serialize_impl(size_computation_serializer);
+  uint32_t md_length = size_computation_serializer.size();
+  serializer.write<uint32_t>(md_length);
 
-  return Status::Ok();
+  // Filter-specific serialization
+  serialize_impl(serializer);
 }
 
-Status Filter::get_option_impl(FilterOption option, void* value) const {
-  (void)option;
-  (void)value;
-  return LOG_STATUS(Status::FilterError("Filter does not support options."));
+Status Filter::get_option_impl(FilterOption, void*) const {
+  return LOG_STATUS(Status_FilterError("Filter does not support options."));
 }
 
-Status Filter::set_option_impl(FilterOption option, const void* value) {
-  (void)option;
-  (void)value;
-  return LOG_STATUS(Status::FilterError("Filter does not support options."));
+Status Filter::set_option_impl(FilterOption, const void*) {
+  return LOG_STATUS(Status_FilterError("Filter does not support options."));
 }
 
-Status Filter::deserialize_impl(ConstBuffer* buff) {
-  (void)buff;
-  return Status::Ok();
-}
-
-Status Filter::serialize_impl(Buffer* buff) const {
-  (void)buff;
-  return Status::Ok();
-}
-
-void Filter::set_pipeline(const FilterPipeline* pipeline) {
-  pipeline_ = pipeline;
+void Filter::serialize_impl(Serializer&) const {
 }
 
 FilterType Filter::type() const {
   return type_;
 }
 
+void Filter::init_compression_resource_pool(uint64_t) {
+}
+
+void Filter::init_decompression_resource_pool(uint64_t) {
+}
+
 }  // namespace sm
 }  // namespace tiledb
+
+std::ostream& operator<<(std::ostream& os, const tiledb::sm::Filter& filter) {
+  filter.output(os);
+  return os;
+}

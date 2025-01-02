@@ -1,0 +1,150 @@
+name: TileDB Nightly Test Build
+
+on:
+  schedule:
+    # runs every day at 2:50 UTC
+    - cron: "50 02 * * *"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+          - os: macos-latest # ASAN build
+            sanitizer: "address"
+            base_triplet: "arm64-osx"
+          - os: macos-latest
+            experimental: ON
+          - os: windows-latest
+          - os: windows-2019
+          - os: windows-latest
+            config: "Debug"
+            # Insufficient space on default D:/ for debug build
+            working_directory: "C:/"
+      fail-fast: false
+
+    name: |
+      ${{ matrix.os }} - Sanitizer: ${{ matrix.sanitizer || 'none' }} | Experimental: ${{ matrix.experimental || 'OFF' }} | ${{ matrix.config || 'Release' }}
+
+    env:
+      TILEDB_NIGHTLY_BUILD: 1
+
+    steps:
+      - name: Print env
+        run: printenv
+
+      - name: Checkout TileDB `dev`
+        uses: actions/checkout@v3
+
+      - name: Configure TileDB CMake (not-Windows)
+        if: ${{ ! contains(matrix.os, 'windows') }}
+        env:
+          SANITIZER_ARG: ${{ matrix.sanitizer || 'OFF' }}
+          EXPERIMENTAL: ${{ matrix.experimental || 'OFF' }}
+        working-directory: ${{ matrix.working_directory || github.workspace }}
+        run: |
+          cmake -B build -DTILEDB_WERROR=ON -DTILEDB_SERIALIZATION=ON -DTILEDB_EXPERIMENTAL_FEATURES=$EXPERIMENTAL -DCMAKE_BUILD_TYPE=${{ matrix.config || 'Release' }} -DTILEDB_SANITIZER=$SANITIZER_ARG -DTILEDB_VCPKG_BASE_TRIPLET=${{ matrix.base_triplet }}
+
+      - name: Configure TileDB CMake (Windows)
+        if: contains(matrix.os, 'windows')
+        working-directory: ${{ matrix.working_directory || github.workspace }}
+        run: |
+          cmake -B build -S $env:GITHUB_WORKSPACE -DTILEDB_WERROR=ON -DTILEDB_SERIALIZATION=ON -DCMAKE_BUILD_TYPE=${{ matrix.config || 'Release' }}
+
+      - name: Build TileDB
+        working-directory: ${{ matrix.working_directory || github.workspace }}
+        run: |
+          cmake --build build -j2 --config ${{ matrix.config || 'Release' }}
+
+      - name: Test TileDB
+        working-directory: ${{ matrix.working_directory || github.workspace }}
+        run: |
+          cmake --build build --target check --config ${{ matrix.config || 'Release' }}
+
+  test_hdfs_build:
+    uses: ./.github/workflows/ci-linux_mac.yml
+    with:
+      ci_backend: HDFS
+      matrix_image: ubuntu-24.04
+      matrix_compiler_cc: 'gcc-13'
+      matrix_compiler_cxx: 'g++-13'
+      timeout: 300
+      build_only: true
+      bootstrap_args: '--enable-hdfs --enable-static-tiledb --disable-werror'
+
+  test_static_linkage:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            triplet: x64-linux
+          - os: windows-2019
+            triplet: x64-windows
+          - os: macos-13
+            triplet: x64-osx
+          - os: macos-latest
+            triplet: arm64-osx
+      fail-fast: false
+    name: ${{ matrix.os }} - Static Linkage
+
+    steps:
+      - name: Print env
+        run: printenv
+
+      - name: Checkout TileDB `dev`
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC toolset
+        uses: TheMrMilchmann/setup-msvc-dev@v3
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Configure TileDB CMake
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DTILEDB_WERROR=ON -DTILEDB_S3=ON -DTILEDB_GCS=ON -DTILEDB_AZURE=ON -DTILEDB_SERIALIZATION=ON -DTILEDB_TESTS=OFF -DBUILD_SHARED_LIBS=OFF
+
+      - name: Build TileDB
+        run: cmake --build build -j2 --config Release --target tiledb
+
+      - name: Install TileDB
+        run: cmake --install build --config Release --prefix dist
+
+      - name: Configure CMake example
+        # Configure with Ninja to use a single-config generator and put the executable in the same path across platforms.
+        run: |
+          & cmake -G Ninja -B examples/cmake_project/build -S examples/cmake_project -DCMAKE_BUILD_TYPE=Release "-DCMAKE_PREFIX_PATH=$($PWD.Path)/dist;$($PWD.Path)/build/vcpkg_installed/${{ matrix.triplet }}"
+        shell: pwsh
+
+      - name: Build CMake example
+        run: cmake --build examples/cmake_project/build -j2
+
+      - name: Run CMake example
+        run: examples/cmake_project/build/ExampleExe
+
+  create_issue_on_fail:
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    needs:
+      - test
+      - test_hdfs_build
+      - test_static_linkage
+    if: github.event_name == 'schedule' && (failure() || cancelled())
+    steps:
+      - name: Checkout TileDB `dev`
+        uses: actions/checkout@v3
+      - name: Create Issue if Build Fails
+        uses: TileDB-Inc/github-actions/open-issue@main
+        with:
+          name: nightly GitHub Actions build
+          label: nightly
+          assignee: KiterLuc,teo-tsirpanis,davisp

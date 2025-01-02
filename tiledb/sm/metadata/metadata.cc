@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,93 +31,116 @@
  */
 
 #include "tiledb/sm/metadata/metadata.h"
+#include "tiledb/common/exception/exception.h"
 #include "tiledb/common/logger.h"
+#include "tiledb/common/memory_tracker.h"
 #include "tiledb/sm/buffer/buffer.h"
 #include "tiledb/sm/enums/datatype.h"
-#include "tiledb/sm/misc/utils.h"
-#include "tiledb/sm/misc/uuid.h"
+#include "tiledb/sm/misc/tdb_time.h"
+#include "tiledb/sm/tile/generic_tile_io.h"
+#include "tiledb/storage_format/uri/generate_uri.h"
 
 #include <iostream>
 #include <sstream>
 
 using namespace tiledb::common;
 
-namespace tiledb {
-namespace sm {
+namespace tiledb::sm {
+
+class MetadataException : public StatusException {
+ public:
+  explicit MetadataException(const std::string& message)
+      : StatusException("Metadata", message) {
+  }
+};
 
 /* ********************************* */
 /*     CONSTRUCTORS & DESTRUCTORS    */
 /* ********************************* */
-
-Metadata::Metadata() {
-  auto t = utils::time::timestamp_now_ms();
-  timestamp_range_ = std::make_pair(t, t);
+Metadata::Metadata(shared_ptr<MemoryTracker> memory_tracker)
+    : memory_tracker_(memory_tracker)
+    , metadata_map_(memory_tracker_->get_resource(MemoryType::METADATA))
+    , metadata_index_(memory_tracker_->get_resource(MemoryType::METADATA))
+    , loaded_metadata_uris_(memory_tracker_->get_resource(MemoryType::METADATA))
+    , timestamped_name_([]() -> std::string {
+      auto t = utils::time::timestamp_now_ms();
+      return tiledb::storage_format::generate_timestamped_name(
+          t, t, std::nullopt);
+    }()) {
+  build_metadata_index();
 }
-
-Metadata::Metadata(const Metadata& rhs)
-    : metadata_map_(rhs.metadata_map_)
-    , timestamp_range_(rhs.timestamp_range_)
-    , loaded_metadata_uris_(rhs.loaded_metadata_uris_)
-    , uri_(rhs.uri_) {
-  if (!rhs.metadata_index_.empty())
-    build_metadata_index();
-}
-
-Metadata::~Metadata() = default;
 
 /* ********************************* */
 /*                API                */
 /* ********************************* */
 
+Metadata& Metadata::operator=(Metadata& other) {
+  clear();
+  for (auto& [k, v] : other.metadata_map_) {
+    metadata_map_.emplace(k, v);
+  }
+
+  timestamped_name_ = other.timestamped_name_;
+
+  for (auto& uri : other.loaded_metadata_uris_) {
+    loaded_metadata_uris_.emplace_back(uri);
+  }
+
+  build_metadata_index();
+
+  return *this;
+}
+
+Metadata& Metadata::operator=(
+    std::map<std::string, Metadata::MetadataValue>&& md_map) {
+  clear();
+  for (auto& [k, v] : md_map) {
+    metadata_map_.emplace(k, v);
+  }
+
+  build_metadata_index();
+
+  return *this;
+}
+
 void Metadata::clear() {
   metadata_map_.clear();
   metadata_index_.clear();
   loaded_metadata_uris_.clear();
-  timestamp_range_ = std::make_pair(0, 0);
   uri_ = URI();
 }
 
-Status Metadata::get_uri(const URI& array_uri, URI* meta_uri) {
+URI Metadata::get_uri(const URI& array_uri) {
   if (uri_.to_string().empty())
-    RETURN_NOT_OK(generate_uri(array_uri));
+    generate_uri(array_uri);
 
-  *meta_uri = uri_;
-  return Status::Ok();
+  return uri_;
 }
 
-Status Metadata::generate_uri(const URI& array_uri) {
-  std::string uuid;
-  RETURN_NOT_OK(uuid::generate_uuid(&uuid, false));
-
-  std::stringstream ss;
-  ss << "__" << timestamp_range_.first << "_" << timestamp_range_.second << "_"
-     << uuid;
-  uri_ = array_uri.join_path(constants::array_metadata_folder_name)
-             .join_path(ss.str());
-
-  return Status::Ok();
+void Metadata::generate_uri(const URI& array_uri) {
+  uri_ = array_uri.join_path(constants::array_metadata_dir_name)
+             .join_path(timestamped_name_);
 }
 
-Status Metadata::deserialize(
-    const std::vector<tdb_shared_ptr<Buffer>>& metadata_buffs) {
-  clear();
+std::map<std::string, Metadata::MetadataValue> Metadata::deserialize(
+    const std::vector<shared_ptr<Tile>>& metadata_tiles) {
+  if (metadata_tiles.empty()) {
+    return {};
+  }
 
-  if (metadata_buffs.empty())
-    return Status::Ok();
-
+  std::map<std::string, MetadataValue> metadata_map;
   uint32_t key_len;
   char del;
   size_t value_len;
-  for (const auto& buff : metadata_buffs) {
+  for (const auto& tile : metadata_tiles) {
     // Iterate over all items
-    buff->reset_offset();
-    while (buff->offset() != buff->size()) {
-      RETURN_NOT_OK(buff->read(&key_len, sizeof(uint32_t)));
-      std::string key((const char*)buff->cur_data(), key_len);
-      buff->advance_offset(key_len);
-      RETURN_NOT_OK(buff->read(&del, sizeof(char)));
+    Deserializer deserializer(tile->data(), tile->size());
+    while (deserializer.remaining_bytes()) {
+      key_len = deserializer.read<uint32_t>();
+      std::string key(deserializer.get_ptr<char>(key_len), key_len);
+      deserializer.read(&del, sizeof(char));
 
-      metadata_map_.erase(key);
+      metadata_map.erase(key);
 
       // Handle deletion
       if (del)
@@ -125,65 +148,83 @@ Status Metadata::deserialize(
 
       MetadataValue value_struct;
       value_struct.del_ = del;
-      RETURN_NOT_OK(buff->read(&value_struct.type_, sizeof(char)));
-      RETURN_NOT_OK(buff->read(&value_struct.num_, sizeof(uint32_t)));
+      value_struct.type_ = deserializer.read<char>();
+      value_struct.num_ = deserializer.read<uint32_t>();
+
       if (value_struct.num_) {
         value_len = value_struct.num_ *
                     datatype_size(static_cast<Datatype>(value_struct.type_));
         value_struct.value_.resize(value_len);
-        RETURN_NOT_OK(buff->read((void*)value_struct.value_.data(), value_len));
+        deserializer.read((void*)value_struct.value_.data(), value_len);
       }
 
       // Insert to metadata
-      metadata_map_.emplace(std::make_pair(key, std::move(value_struct)));
+      metadata_map.emplace(std::make_pair(key, std::move(value_struct)));
     }
   }
 
-  build_metadata_index();
-  // Note: `metadata_map_` and `metadata_index_` are immutable after this point
-
-  return Status::Ok();
+  return metadata_map;
 }
 
-Status Metadata::serialize(Buffer* buff) const {
+void Metadata::serialize(Serializer& serializer) const {
   // Do nothing if there are no metadata to serialize
-  if (metadata_map_.empty())
-    return Status::Ok();
+  if (metadata_map_.empty()) {
+    return;
+  }
 
   for (const auto& meta : metadata_map_) {
     auto key_len = (uint32_t)meta.first.size();
-    RETURN_NOT_OK(buff->write(&key_len, sizeof(uint32_t)));
-    RETURN_NOT_OK(buff->write(meta.first.data(), meta.first.size()));
+    serializer.write<uint32_t>(key_len);
+    serializer.write(meta.first.data(), meta.first.size());
     const auto& value = meta.second;
-    RETURN_NOT_OK(buff->write(&value.del_, sizeof(char)));
+    serializer.write<char>(value.del_);
     if (!value.del_) {
-      RETURN_NOT_OK(buff->write(&value.type_, sizeof(char)));
-      RETURN_NOT_OK(buff->write(&value.num_, sizeof(uint32_t)));
+      serializer.write<char>(value.type_);
+      serializer.write<uint32_t>(value.num_);
       if (value.num_)
-        RETURN_NOT_OK(buff->write(value.value_.data(), value.value_.size()));
+        serializer.write(value.value_.data(), value.value_.size());
     }
   }
-
-  return Status::Ok();
 }
 
-const std::pair<uint64_t, uint64_t>& Metadata::timestamp_range() const {
-  return timestamp_range_;
+void Metadata::store(
+    ContextResources& resources,
+    const URI& uri,
+    const EncryptionKey& encryption_key) {
+  auto timer_se = resources.stats().start_timer("write_meta");
+
+  // Serialize array metadata
+  SizeComputationSerializer size_computation_serializer;
+  serialize(size_computation_serializer);
+
+  // Do nothing if there are no metadata to write
+  if (0 == size_computation_serializer.size()) {
+    return;
+  }
+  auto tile{WriterTile::from_generic(
+      size_computation_serializer.size(),
+      resources.ephemeral_memory_tracker())};
+  Serializer serializer(tile->data(), tile->size());
+  serialize(serializer);
+  resources.stats().add_counter(
+      "write_meta_size", size_computation_serializer.size());
+
+  // Create a metadata file name
+  GenericTileIO::store_data(resources, get_uri(uri), tile, encryption_key);
 }
 
-Status Metadata::del(const char* key) {
+void Metadata::del(const char* key) {
   assert(key != nullptr);
 
   std::unique_lock<std::mutex> lck(mtx_);
 
   MetadataValue value;
   value.del_ = 1;
-  metadata_map_.emplace(std::make_pair(std::string(key), std::move(value)));
-
-  return Status::Ok();
+  metadata_map_.insert_or_assign(key, std::move(value));
+  build_metadata_index();
 }
 
-Status Metadata::put(
+void Metadata::put(
     const char* key,
     Datatype value_type,
     uint32_t value_num,
@@ -205,14 +246,11 @@ Status Metadata::put(
     value_struct.value_.resize(value_size);
     std::memcpy(value_struct.value_.data(), value, value_size);
   }
-  metadata_map_.erase(std::string(key));
-  metadata_map_.emplace(
-      std::make_pair(std::string(key), std::move(value_struct)));
-
-  return Status::Ok();
+  metadata_map_.insert_or_assign(key, std::move(value_struct));
+  build_metadata_index();
 }
 
-Status Metadata::get(
+void Metadata::get(
     const char* key,
     Datatype* value_type,
     uint32_t* value_num,
@@ -223,7 +261,7 @@ Status Metadata::get(
   if (it == metadata_map_.end()) {
     // Key not found
     *value = nullptr;
-    return Status::Ok();
+    return;
   }
 
   // Key found
@@ -237,11 +275,9 @@ Status Metadata::get(
     *value_num = value_struct.num_;
     *value = (const void*)(value_struct.value_.data());
   }
-
-  return Status::Ok();
 }
 
-Status Metadata::get(
+void Metadata::get(
     uint64_t index,
     const char** key,
     uint32_t* key_len,
@@ -252,8 +288,7 @@ Status Metadata::get(
     build_metadata_index();
 
   if (index >= metadata_index_.size())
-    return LOG_STATUS(
-        Status::MetadataError("Cannot get metadata; index out of bounds"));
+    throw MetadataException("Cannot get metadata; index out of bounds");
 
   // Get key
   auto& key_str = *(metadata_index_[index].first);
@@ -271,61 +306,58 @@ Status Metadata::get(
     *value_num = value_struct.num_;
     *value = (const void*)(value_struct.value_.data());
   }
-  return Status::Ok();
 }
 
-Status Metadata::has_key(const char* key, Datatype* value_type, bool* has_key) {
+std::optional<Datatype> Metadata::metadata_type(const char* key) {
   assert(key != nullptr);
 
   auto it = metadata_map_.find(key);
   if (it == metadata_map_.end()) {
     // Key not found
-    *has_key = false;
-    return Status::Ok();
+    return nullopt;
   }
 
   // Key found
   auto& value_struct = it->second;
-  *value_type = static_cast<Datatype>(value_struct.type_);
-  *has_key = true;
-
-  return Status::Ok();
+  return static_cast<Datatype>(value_struct.type_);
 }
 
 uint64_t Metadata::num() const {
   return metadata_map_.size();
 }
 
-Status Metadata::set_loaded_metadata_uris(
+void Metadata::set_loaded_metadata_uris(
     const std::vector<TimestampedURI>& loaded_metadata_uris) {
-  if (loaded_metadata_uris.empty())
-    return Status::Ok();
+  if (loaded_metadata_uris.empty()) {
+    return;
+  }
 
   loaded_metadata_uris_.clear();
-  for (const auto& uri : loaded_metadata_uris)
+  for (const auto& uri : loaded_metadata_uris) {
     loaded_metadata_uris_.push_back(uri.uri_);
+  }
 
-  timestamp_range_.first = loaded_metadata_uris.front().timestamp_range_.first;
-  timestamp_range_.second = loaded_metadata_uris.back().timestamp_range_.second;
-
-  return Status::Ok();
+  timestamped_name_ = tiledb::storage_format::generate_timestamped_name(
+      loaded_metadata_uris.front().timestamp_range_.first,
+      loaded_metadata_uris.back().timestamp_range_.second,
+      std::nullopt);
 }
 
-const std::vector<URI>& Metadata::loaded_metadata_uris() const {
+const tdb::pmr::vector<URI>& Metadata::loaded_metadata_uris() const {
   return loaded_metadata_uris_;
-}
-
-void Metadata::swap(Metadata* metadata) {
-  std::swap(metadata_map_, metadata->metadata_map_);
-  std::swap(metadata_index_, metadata->metadata_index_);
-  std::swap(timestamp_range_, metadata->timestamp_range_);
-  std::swap(loaded_metadata_uris_, metadata->loaded_metadata_uris_);
 }
 
 void Metadata::reset(uint64_t timestamp) {
   clear();
-  timestamp = (timestamp != 0) ? timestamp : utils::time::timestamp_now_ms();
-  timestamp_range_ = std::make_pair(timestamp, timestamp);
+  timestamped_name_ = tiledb::storage_format::generate_timestamped_name(
+      timestamp, timestamp, std::nullopt);
+}
+
+void Metadata::reset(
+    const uint64_t timestamp_start, const uint64_t timestamp_end) {
+  clear();
+  timestamped_name_ = tiledb::storage_format::generate_timestamped_name(
+      timestamp_start, timestamp_end, std::nullopt);
 }
 
 Metadata::iterator Metadata::begin() const {
@@ -348,5 +380,4 @@ void Metadata::build_metadata_index() {
     metadata_index_[i++] = std::make_pair(&(m.first), &(m.second));
 }
 
-}  // namespace sm
-}  // namespace tiledb
+}  // namespace tiledb::sm

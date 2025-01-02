@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Collection, Iterable, Mapping, Pattern
 
 # Do not check for violations in these directories.
-ignored_dirs = frozenset(["c_api", "cpp_api"])
+ignored_dirs = frozenset(["c_api", "cpp_api", "experimental"])
 
 # Do not check for violations in these files.
 ignored_files = frozenset(
@@ -17,6 +17,7 @@ ignored_files = frozenset(
         "heap_profiler.cc",
         "heap_memory.h",
         "heap_memory.cc",
+        "stop_token.h",
     ]
 )
 
@@ -24,7 +25,10 @@ ignored_files = frozenset(
 regex_malloc = re.compile(r"malloc\(")
 
 # Contains per-file exceptions to violations of "malloc".
-malloc_exceptions = {"*": ["tdb_malloc", "tiledb_malloc"]}
+malloc_exceptions = {
+    "*": ["tdb_malloc", "tiledb_malloc"],
+    "context_api.cc": ["*stats_json = static_cast<char*>(std::malloc(str.size() + 1));"]
+}
 
 # Match C API calloc:
 regex_calloc = re.compile(r"calloc\(")
@@ -88,8 +92,7 @@ regex_make_shared = re.compile(r"std::make_shared<")
 
 # Contains per-file exceptions to violations of "make_shared".
 make_shared_exceptions = {
-    "*": ["tdb::make_shared"],
-    "*": ["tiledb::common::make_shared"],
+    "*": ["tdb::make_shared", "tiledb::common::make_shared"],
 }
 
 # Match C++ unique_ptr objects.
@@ -97,12 +100,11 @@ regex_unique_ptr = re.compile(r"unique_ptr<")
 
 # Contains per-file exceptions to violations of "make_unique".
 unique_ptr_exceptions = {
-    "*": ["tdb_unique_ptr", "tiledb_unique_ptr"],
-    "zstd_compressor.cc": [
-        "std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> ctx(",
-        "std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> ctx(",
-    ],
+    "*": ["tdb_unique_ptr", "tiledb_unique_ptr", "tdb::pmr::unique_ptr"],
+    "zstd_compressor.h": ["std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> ctx_;", "std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> ctx_;"],
+    "posix.cc": ["std::unique_ptr<DIR, UniqueDIRDeleter>", "static std::unique_ptr<char, decltype(&free)> cwd_(getcwd(nullptr, 0), free);"],
     "curl.h": ["std::unique_ptr<CURL, decltype(&curl_easy_cleanup)>"],
+    "pmr.h": ["std::unique_ptr", "unique_ptr<Tp> make_unique("],
 }
 
 
@@ -145,7 +147,7 @@ violation_checkers = [
 
 
 def iter_file_violations(file_path: str) -> Iterable[Violation]:
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8") as f:
         for line_num, line in enumerate(f):
             line = line.strip()
             for checker in violation_checkers:
@@ -155,7 +157,9 @@ def iter_file_violations(file_path: str) -> Iterable[Violation]:
 
 def iter_dir_violations(dir_path: str) -> Iterable[Violation]:
     for directory, subdirlist, file_names in os.walk(dir_path):
-        if os.path.basename(directory) not in ignored_dirs:
+        if os.path.basename(directory) in ignored_dirs:
+            subdirlist.clear()
+        else:
             for file_name in file_names:
                 if file_name not in ignored_files and file_name.endswith((".h", ".cc")):
                     yield from iter_file_violations(os.path.join(directory, file_name))

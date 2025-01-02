@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,22 +33,22 @@
 #include "tiledb/sm/filter/filter_buffer.h"
 #include "tiledb/common/heap_memory.h"
 #include "tiledb/common/logger.h"
+#include "tiledb/sm/enums/datatype.h"
 #include "tiledb/sm/filter/filter_storage.h"
 
 #include <algorithm>
 
 using namespace tiledb::common;
 
-namespace tiledb {
-namespace sm {
+namespace tiledb::sm {
 
-FilterBuffer::BufferOrView::BufferOrView(const tdb_shared_ptr<Buffer>& buffer) {
+FilterBuffer::BufferOrView::BufferOrView(const shared_ptr<Buffer>& buffer) {
   underlying_buffer_ = buffer;
   is_view_ = false;
 }
 
 FilterBuffer::BufferOrView::BufferOrView(
-    const tdb_shared_ptr<Buffer>& buffer, uint64_t offset, uint64_t nbytes) {
+    const shared_ptr<Buffer>& buffer, uint64_t offset, uint64_t nbytes) {
   is_view_ = true;
   underlying_buffer_ = buffer;
   view_ = tdb_unique_ptr<Buffer>(
@@ -65,7 +65,7 @@ Buffer* FilterBuffer::BufferOrView::buffer() const {
   return is_view_ ? view_.get() : underlying_buffer_.get();
 }
 
-tdb_shared_ptr<Buffer> FilterBuffer::BufferOrView::underlying_buffer() const {
+shared_ptr<Buffer> FilterBuffer::BufferOrView::underlying_buffer() const {
   return underlying_buffer_;
 }
 
@@ -102,7 +102,7 @@ FilterBuffer::FilterBuffer(FilterStorage* storage) {
 
 Status FilterBuffer::swap(FilterBuffer& other) {
   if (read_only_ || other.read_only_)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; cannot swap read-only buffers."));
 
   buffers_.swap(other.buffers_);
@@ -119,16 +119,16 @@ Status FilterBuffer::swap(FilterBuffer& other) {
 
 Status FilterBuffer::init(void* data, uint64_t nbytes) {
   if (!buffers_.empty())
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; cannot init buffer: not empty."));
   else if (data == nullptr)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; cannot init buffer: nullptr given."));
   else if (read_only_)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; cannot init buffer: read-only."));
 
-  tdb_shared_ptr<Buffer> buffer(tdb_new(Buffer, data, nbytes));
+  shared_ptr<Buffer> buffer(tdb_new(Buffer, data, nbytes));
   offset_ = 0;
   buffers_.emplace_back(buffer);
   current_relative_offset_ = 0;
@@ -138,10 +138,10 @@ Status FilterBuffer::init(void* data, uint64_t nbytes) {
 
 Status FilterBuffer::set_fixed_allocation(void* buffer, uint64_t nbytes) {
   if (!buffers_.empty() || fixed_allocation_data_ != nullptr)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; cannot set fixed allocation: not empty."));
   else if (read_only_)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; cannot set fixed allocation: read-only."));
 
   RETURN_NOT_OK(init(buffer, nbytes));
@@ -176,12 +176,12 @@ Status FilterBuffer::get_const_buffer(
     uint64_t nbytes, ConstBuffer* buffer) const {
   if (current_buffer_ == buffers_.end())
     return LOG_STATUS(
-        Status::FilterError("FilterBuffer error; no current buffer."));
+        Status_FilterError("FilterBuffer error; no current buffer."));
 
   Buffer* buf = current_buffer_->buffer();
   uint64_t bytes_in_buf = buf->size() - current_relative_offset_;
   if (bytes_in_buf < nbytes)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; ConstBuffer would span multiple regions."));
 
   *buffer = ConstBuffer(buf->data(current_relative_offset_), nbytes);
@@ -195,6 +195,76 @@ std::vector<ConstBuffer> FilterBuffer::buffers() const {
   for (auto it = buffers_.cbegin(), ite = buffers_.cend(); it != ite; ++it) {
     Buffer* buffer = it->buffer();
     result.emplace_back(buffer->data(), buffer->size());
+  }
+
+  return result;
+}
+
+std::vector<ConstBuffer> FilterBuffer::buffers_as(Datatype datatype) const {
+  switch (datatype) {
+    case Datatype::ANY:
+      // If datatype is ANY, return buffers as-is
+      return buffers();
+    case Datatype::FLOAT32:
+      return buffers_as<float>();
+    case Datatype::FLOAT64:
+      return buffers_as<double>();
+    case Datatype::BLOB:
+    case Datatype::GEOM_WKB:
+    case Datatype::GEOM_WKT:
+    case Datatype::BOOL:
+    case Datatype::UINT8:
+      return buffers_as<uint8_t>();
+    case Datatype::INT8:
+      return buffers_as<int8_t>();
+    case Datatype::UINT16:
+      return buffers_as<uint16_t>();
+    case Datatype::INT16:
+      return buffers_as<int16_t>();
+    case Datatype::UINT32:
+      return buffers_as<uint32_t>();
+    case Datatype::INT32:
+      return buffers_as<int32_t>();
+    case Datatype::UINT64:
+      return buffers_as<uint64_t>();
+    case Datatype::INT64:
+    case Datatype::DATETIME_YEAR:
+    case Datatype::DATETIME_MONTH:
+    case Datatype::DATETIME_WEEK:
+    case Datatype::DATETIME_DAY:
+    case Datatype::DATETIME_HR:
+    case Datatype::DATETIME_MIN:
+    case Datatype::DATETIME_SEC:
+    case Datatype::DATETIME_MS:
+    case Datatype::DATETIME_US:
+    case Datatype::DATETIME_NS:
+    case Datatype::DATETIME_PS:
+    case Datatype::DATETIME_FS:
+    case Datatype::DATETIME_AS:
+    case Datatype::TIME_HR:
+    case Datatype::TIME_MIN:
+    case Datatype::TIME_SEC:
+    case Datatype::TIME_MS:
+    case Datatype::TIME_US:
+    case Datatype::TIME_NS:
+    case Datatype::TIME_PS:
+    case Datatype::TIME_FS:
+    case Datatype::TIME_AS:
+      return buffers_as<int64_t>();
+    default:
+      throw StatusException(Status_FilterError(
+          "Failed to reinterpret data as '" + datatype_str(datatype) +
+          "'; Unsupported datatype."));
+  }
+}
+
+template <typename T>
+std::vector<ConstBuffer> FilterBuffer::buffers_as() const {
+  std::vector<ConstBuffer> result;
+
+  for (auto it = buffers_.cbegin(), ite = buffers_.cend(); it != ite; ++it) {
+    Buffer* buffer = it->buffer();
+    result.emplace_back(buffer->data_as<T>(), buffer->size());
   }
 
   return result;
@@ -243,7 +313,7 @@ Status FilterBuffer::read(void* buffer, uint64_t nbytes) {
   }
 
   if (bytes_left > 0)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; could not read requested byte count."));
 
   // Adjust the offset and advance to next buffer if we're at the end of it.
@@ -265,8 +335,8 @@ bool FilterBuffer::read_only() const {
 
 Status FilterBuffer::write(const void* buffer, uint64_t nbytes) {
   if (read_only_)
-    return LOG_STATUS(Status::FilterError(
-        "FilterBuffer error; cannot set write: read-only."));
+    return LOG_STATUS(
+        Status_FilterError("FilterBuffer error; cannot set write: read-only."));
 
   uint64_t bytes_left = nbytes;
   uint64_t src_offset = 0;
@@ -276,7 +346,7 @@ Status FilterBuffer::write(const void* buffer, uint64_t nbytes) {
         dest->owns_data() ? dest->alloced_size() : dest->size();
     uint64_t bytes_avail_in_dest = dest_buffer_size - current_relative_offset_;
     if (bytes_avail_in_dest == 0)
-      return LOG_STATUS(Status::FilterError(
+      return LOG_STATUS(Status_FilterError(
           "FilterBuffer error; could not write: buffer is full."));
 
     // Write to the destination. We can't use Buffer::write() here as the
@@ -310,7 +380,7 @@ Status FilterBuffer::write(const void* buffer, uint64_t nbytes) {
   }
 
   if (bytes_left > 0)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; could not write requested byte count."));
 
   // Adjust the offset and advance to next buffer if we're at the end of it.
@@ -331,7 +401,7 @@ Status FilterBuffer::write(const void* buffer, uint64_t nbytes) {
 Status FilterBuffer::write(FilterBuffer* other, uint64_t nbytes) {
   if (read_only_)
     return LOG_STATUS(
-        Status::FilterError("FilterBuffer error; cannot write: read-only."));
+        Status_FilterError("FilterBuffer error; cannot write: read-only."));
 
   auto list_node = other->current_buffer_;
   uint64_t relative_offset = other->current_relative_offset_;
@@ -352,7 +422,7 @@ Status FilterBuffer::write(FilterBuffer* other, uint64_t nbytes) {
   }
 
   if (bytes_left > 0)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; could not write requested byte count."));
 
   return Status::Ok();
@@ -374,7 +444,7 @@ Status FilterBuffer::get_relative_offset(
     rel_offset -= buffer_size;
   }
 
-  return LOG_STATUS(Status::FilterError(
+  return LOG_STATUS(Status_FilterError(
       "FilterBuffer error; cannot determine relative offset."));
 }
 
@@ -440,7 +510,7 @@ void FilterBuffer::advance_offset(uint64_t nbytes) {
 
 Status FilterBuffer::prepend_buffer(uint64_t nbytes) {
   if (read_only_)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; cannot prepend buffer: read-only."));
 
   if (fixed_allocation_data_ == nullptr) {
@@ -461,12 +531,12 @@ Status FilterBuffer::prepend_buffer(uint64_t nbytes) {
     // Check for errors
     if (!fixed_allocation_op_allowed_)
       return LOG_STATUS(
-          Status::FilterError("FilterBuffer error; cannot prepend buffer: "
-                              "fixed allocation is set."));
+          Status_FilterError("FilterBuffer error; cannot prepend buffer: "
+                             "fixed allocation is set."));
     else if (nbytes > buffers_.front().buffer()->size())
       return LOG_STATUS(
-          Status::FilterError("FilterBuffer error; cannot prepend buffer: "
-                              "fixed allocation not large enough."));
+          Status_FilterError("FilterBuffer error; cannot prepend buffer: "
+                             "fixed allocation not large enough."));
 
     // Disallow further operations
     fixed_allocation_op_allowed_ = false;
@@ -480,7 +550,7 @@ Status FilterBuffer::prepend_buffer(uint64_t nbytes) {
 Status FilterBuffer::append_view(
     const FilterBuffer* other, uint64_t offset, uint64_t nbytes) {
   if (read_only_)
-    return LOG_STATUS(Status::FilterError(
+    return LOG_STATUS(Status_FilterError(
         "FilterBuffer error; cannot append view: read-only."));
 
   // Empty views can be skipped.
@@ -491,12 +561,12 @@ Status FilterBuffer::append_view(
   if (fixed_allocation_data_ != nullptr) {
     assert(!buffers_.empty());
     if (!fixed_allocation_op_allowed_)
-      return LOG_STATUS(Status::FilterError(
+      return LOG_STATUS(Status_FilterError(
           "FilterBuffer error; cannot append view: fixed allocation set."));
     else if (nbytes > buffers_.front().buffer()->size())
       return LOG_STATUS(
-          Status::FilterError("FilterBuffer error; cannot append view: "
-                              "fixed allocation not large enough."));
+          Status_FilterError("FilterBuffer error; cannot append view: "
+                             "fixed allocation not large enough."));
 
     // Disallow further operations
     fixed_allocation_op_allowed_ = false;
@@ -546,7 +616,7 @@ Status FilterBuffer::append_view(const FilterBuffer* other) {
 Status FilterBuffer::clear() {
   if (read_only_)
     return LOG_STATUS(
-        Status::FilterError("FilterBuffer error; cannot clear: read-only."));
+        Status_FilterError("FilterBuffer error; cannot clear: read-only."));
 
   offset_ = 0;
 
@@ -571,5 +641,16 @@ Status FilterBuffer::clear() {
   return Status::Ok();
 }
 
-}  // namespace sm
-}  // namespace tiledb
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<char>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<float>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<double>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<int8_t>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<uint8_t>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<int16_t>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<uint16_t>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<int32_t>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<uint32_t>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<int64_t>() const;
+template std::vector<ConstBuffer> FilterBuffer::buffers_as<uint64_t>() const;
+
+}  // namespace tiledb::sm

@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2018-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2018-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,26 +31,21 @@
  */
 
 #include "tiledb/sm/global_state/global_state.h"
-#include "tiledb/sm/global_state/libcurl_state.h"
-#include "tiledb/sm/global_state/openssl_state.h"
 #include "tiledb/sm/global_state/signal_handlers.h"
 #include "tiledb/sm/global_state/watchdog.h"
 #include "tiledb/sm/misc/constants.h"
 #include "tiledb/sm/storage_manager/storage_manager.h"
 
 #ifdef __linux__
-#include "tiledb/common/thread_pool.h"
+#include "tiledb/common/thread_pool/thread_pool.h"
 #include "tiledb/sm/filesystem/posix.h"
-#include "tiledb/sm/misc/utils.h"
 #endif
 
 #include <cassert>
 
 using namespace tiledb::common;
 
-namespace tiledb {
-namespace sm {
-namespace global_state {
+namespace tiledb::sm::global_state {
 
 GlobalState& GlobalState::GetGlobalState() {
   // This is thread-safe in C++11.
@@ -62,43 +57,24 @@ GlobalState::GlobalState() {
   initialized_ = false;
 }
 
-Status GlobalState::init(const Config* config) {
+void GlobalState::init(const Config& config) {
   std::unique_lock<std::mutex> lck(init_mtx_);
 
   // Get config params
-  bool found;
-  bool enable_signal_handlers = false;
-  RETURN_NOT_OK(config_.get<bool>(
-      "sm.enable_signal_handlers", &enable_signal_handlers, &found));
-  assert(found);
+  bool enable_signal_handlers =
+      config.get<bool>("sm.enable_signal_handlers", Config::must_find);
 
   // run these operations once
   if (!initialized_) {
-    if (config != nullptr) {
-      config_ = *config;
-    }
-    if (enable_signal_handlers) {
-      RETURN_NOT_OK(SignalHandlers::GetSignalHandlers().initialize());
-    }
-    RETURN_NOT_OK(Watchdog::GetWatchdog().initialize());
-    RETURN_NOT_OK(init_openssl());
-    RETURN_NOT_OK(init_libcurl());
+    config_ = config;
 
-#ifdef __linux__
-    // We attempt to find the linux ca cert bundle
-    // This only needs to happen one time, and then we will use the file found
-    // for each s3/rest call as appropriate
-    Posix posix;
-    ThreadPool tp;
-    tp.init();
-    posix.init(config_, &tp);
-    cert_file_ = utils::https::find_ca_certs_linux(posix);
-#endif
+    if (enable_signal_handlers) {
+      SignalHandlers::GetSignalHandlers().initialize();
+    }
+    Watchdog::GetWatchdog().initialize();
 
     initialized_ = true;
   }
-
-  return Status::Ok();
 }
 
 void GlobalState::register_storage_manager(StorageManager* sm) {
@@ -116,25 +92,4 @@ std::set<StorageManager*> GlobalState::storage_managers() {
   return storage_managers_;
 }
 
-OpenArrayMemoryTracker* GlobalState::array_memory_tracker(
-    const URI& array_uri, StorageManager* caller) {
-  std::unique_lock<std::mutex> lck(storage_managers_mtx_);
-  for (auto& storage_manager : storage_managers_) {
-    if (storage_manager == caller)
-      continue;
-
-    auto tracker = storage_manager->array_memory_tracker(array_uri, false);
-    if (tracker != nullptr)
-      return tracker;
-  }
-
-  return nullptr;
-}
-
-const std::string& GlobalState::cert_file() {
-  return cert_file_;
-}
-
-}  // namespace global_state
-}  // namespace sm
-}  // namespace tiledb
+}  // namespace tiledb::sm::global_state

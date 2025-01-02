@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -43,12 +43,11 @@ namespace sm {
 
 /**
  * A filter that computes a checksum of the input data into the output data
- buffer with
- * user specified algorithm.
+ * buffer with user specified algorithm.
  *
  * If the input comes in multiple FilterBuffer parts, each part is checksummed
  * independently in the forward direction. Input metadata is checksummed as
- well.
+ * well.
  *
  * The forward output metadata has the format:
  *   uint32_t - number of metadata checksums
@@ -74,16 +73,17 @@ class ChecksumMD5Filter : public Filter {
  public:
   /**
    * Constructor.
+   *
+   * @param filter_data_type Datatype the filter will operate on.
    */
-  ChecksumMD5Filter();
-
-  /** Dumps the filter details in ASCII format in the selected output. */
-  void dump(FILE* out) const override;
+  ChecksumMD5Filter(Datatype filter_data_type);
 
   /**
    * Encrypt the bytes of the input data into the output data buffer.
    */
-  Status run_forward(
+  void run_forward(
+      const WriterTile& tile,
+      WriterTile* const offsets_tile,
       FilterBuffer* input_metadata,
       FilterBuffer* input,
       FilterBuffer* output_metadata,
@@ -93,11 +93,17 @@ class ChecksumMD5Filter : public Filter {
    * Decrypt the bytes of the input data into the output data buffer.
    */
   Status run_reverse(
+      const Tile& tile,
+      Tile* const offsets_tile,
       FilterBuffer* input_metadata,
       FilterBuffer* input,
       FilterBuffer* output_metadata,
       FilterBuffer* output,
       const Config& config) const override;
+
+ protected:
+  /** Dumps the filter details in ASCII format in the selected output string. */
+  std::ostream& output(std::ostream& os) const override;
 
  private:
   /** Returns a new clone of this filter. */

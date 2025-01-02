@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2018-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2018-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -57,7 +57,7 @@ void create_array() {
   schema.add_attribute(Attribute::create<int>(ctx, "a"));
 
   // Create the (empty) array on disk.
-  Array::create(array_name, schema);
+  Array::create(ctx, array_name, schema);
 }
 
 void write_array() {
@@ -97,7 +97,8 @@ void read_array(tiledb_layout_t layout) {
             << non_empty_domain[1].second.second << "]\n";
 
   // Slice only rows 1, 2 and cols 2, 3, 4
-  const std::vector<int> subarray = {1, 2, 2, 4};
+  Subarray subarray(ctx, array);
+  subarray.add_range(0, 1, 2).add_range(1, 2, 4);
 
   // Prepare buffers that will hold the results
   std::vector<int> data(6);

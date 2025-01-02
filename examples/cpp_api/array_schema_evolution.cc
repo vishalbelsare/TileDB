@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2018-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2018-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -55,7 +55,7 @@ void create_array(const Context& ctx) {
   schema.add_attribute(Attribute::create<int>(ctx, "a"));
 
   // Create the (empty) array on disk.
-  Array::create(array_uri, schema);
+  Array::create(ctx, array_uri, schema);
 }
 
 void write_array(const Context& ctx) {
@@ -82,7 +82,7 @@ void write_array2(const Context& ctx) {
   std::vector<int> coords_rows = {3};
   std::vector<int> coords_cols = {1};
   std::vector<int> a_data = {4};
-  std::vector<int> b_data = {4};
+  std::vector<uint32_t> b_data = {4};
 
   // Open the array for writing and create the query.
   Array array(ctx, array_uri, TILEDB_WRITE);
@@ -103,7 +103,8 @@ void read_array(const Context& ctx) {
   Array array(ctx, array_uri, TILEDB_READ);
 
   // Slice only rows 1, 2 and cols 2, 3, 4
-  const std::vector<int> subarray = {1, 2, 2, 4};
+  Subarray subarray(ctx, array);
+  subarray.add_range(0, 1, 2).add_range(1, 2, 4);
 
   // Prepare the vector that will hold the result.
   // We take an upper bound on the result size, as we do not
@@ -147,9 +148,10 @@ void read_array2(const Context& ctx) {
   std::vector<int> coords_cols(4);
 
   // Prepare the query
+  Subarray subarray(ctx, array);
+  subarray.add_range(0, 1, 4).add_range(1, 1, 4);
   Query query(ctx, array, TILEDB_READ);
-  query.add_range(0, 1, 4)
-      .add_range(1, 1, 4)
+  query.set_subarray(subarray)
       .set_layout(TILEDB_ROW_MAJOR)
       .set_data_buffer("a", a_data)
       .set_data_buffer("b", b_data)

@@ -1,16 +1,26 @@
 name: Backport
 on:
-  pull_request:
-    types:
-      - closed
-      - labeled
+  issue_comment:
+    types: [created]
+  schedule:
+    # once a day at 13:00 UTC to cleanup old runs
+    - cron: '0 13 * * *'
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
 
 jobs:
   backport:
-    runs-on: ubuntu-18.04
-    name: Backport
-    steps:
-      - name: Backport
-        uses: tibdex/backport@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+    uses: dotnet/arcade/.github/workflows/backport-base.yml@aa70f3a7a494063952307a9b1df7ca0ab67bce13
+    with:
+      pr_title_template: '[Backport %target_branch%] %source_pr_title% (#%source_pr_number%)'
+      pr_description_template: |
+        Backport of #%source_pr_number% to %target_branch%
+
+        ---
+        TYPE: NO_HISTORY | FEATURE | BUG | IMPROVEMENT | DEPRECATION | C_API | CPP_API | BREAKING_BEHAVIOR | BREAKING_API | FORMAT
+        DESC: <short description>
+      repository_owners: TileDB-Inc

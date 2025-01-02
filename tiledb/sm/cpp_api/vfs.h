@@ -92,7 +92,7 @@ class VFSFilebuf : public std::streambuf {
   VFSFilebuf& operator=(const VFSFilebuf&) = default;
   VFSFilebuf& operator=(VFSFilebuf&&) = default;
   ~VFSFilebuf() override {
-    close();
+    close(false);
   }
 
   /* ********************************* */
@@ -114,7 +114,7 @@ class VFSFilebuf : public std::streambuf {
   }
 
   /** Close a file. **/
-  VFSFilebuf* close();
+  VFSFilebuf* close(bool should_throw = true);
 
   /** Current opened URI. **/
   const std::string& get_uri() const {
@@ -318,7 +318,7 @@ class VFS {
    * // Create new file, truncating it if it exists.
    * buff.open("file.txt", std::ios::out);
    * std::ostream os(&buff);
-   * if (!os.good()) throw std::runtime_error("Error opening file);
+   * if (!os.good()) throw std::runtime_error("Error opening file");
    *
    * std::string str = "This will be written to the file.";
    *
@@ -416,10 +416,10 @@ class VFS {
   /** Check if an object store bucket is empty **/
   bool is_empty_bucket(const std::string& bucket) const {
     auto& ctx = ctx_.get();
-    int empty;
+    int is_empty;
     ctx.handle_error(tiledb_vfs_is_empty_bucket(
-        ctx.ptr().get(), vfs_.get(), bucket.c_str(), &empty));
-    return empty == 0;
+        ctx.ptr().get(), vfs_.get(), bucket.c_str(), &is_empty));
+    return is_empty;
   }
 
   /** Creates a directory with the input URI. */
@@ -631,10 +631,11 @@ inline VFSFilebuf* VFSFilebuf::open(
   return this;
 }
 
-inline VFSFilebuf* VFSFilebuf::close() {
+inline VFSFilebuf* VFSFilebuf::close(bool should_throw) {
   if (is_open()) {
     auto& ctx = vfs_.get().context();
-    ctx.handle_error(tiledb_vfs_close(ctx.ptr().get(), fh_.get()));
+    if (should_throw)
+      ctx.handle_error(tiledb_vfs_close(ctx.ptr().get(), fh_.get()));
   }
   uri_ = "";
   fh_ = nullptr;
@@ -683,8 +684,7 @@ inline uint64_t VFSFilebuf::file_size() const {
     return 0;
   try {
     return vfs_.get().file_size(uri_);
-  } catch (TileDBError& e) {
-    (void)e;
+  } catch (TileDBError&) {
     return 0;
   }
 }

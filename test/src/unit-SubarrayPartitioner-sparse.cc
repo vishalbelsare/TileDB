@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,9 +30,9 @@
  * Tests the `SubarrayPartitioner` class for sparse arrays.
  */
 
-#include "test/src/helpers.h"
-#include "test/src/vfs_helpers.h"
-#include "tiledb/sm/c_api/tiledb_struct_def.h"
+#include "test/support/src/helpers.h"
+#include "test/support/src/vfs_helpers.h"
+#include "tiledb/api/c_api/array/array_api_internal.h"
 #include "tiledb/sm/subarray/subarray_partitioner.h"
 
 #ifdef _WIN32
@@ -41,12 +41,13 @@
 #include "tiledb/sm/filesystem/posix.h"
 #endif
 
-#include <catch.hpp>
+#include <test/support/tdb_catch.h>
 #include <iostream>
 
 using namespace tiledb::common;
 using namespace tiledb::sm;
 using namespace tiledb::test;
+using namespace tiledb::type;
 
 /* ********************************* */
 /*         STRUCT DEFINITION         */
@@ -240,12 +241,13 @@ void SubarrayPartitionerSparseFx::write_default_1d_array() {
   uint64_t coords_size = coords.size() * sizeof(uint64_t);
   std::vector<int> a = {1, 2, 3, 4, 5, 6};
   uint64_t a_size = a.size() * sizeof(int);
-  std::vector<uint64_t> b_off = {0,
-                                 sizeof(int),
-                                 3 * sizeof(int),
-                                 6 * sizeof(int),
-                                 9 * sizeof(int),
-                                 11 * sizeof(int)};
+  std::vector<uint64_t> b_off = {
+      0,
+      sizeof(int),
+      3 * sizeof(int),
+      6 * sizeof(int),
+      9 * sizeof(int),
+      11 * sizeof(int)};
   uint64_t b_off_size = b_off.size() * sizeof(uint64_t);
   std::vector<int> b_val = {1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 6, 6};
   uint64_t b_val_size = b_val.size() * sizeof(int);
@@ -263,16 +265,17 @@ void SubarrayPartitionerSparseFx::write_default_1d_array_2() {
   uint64_t coords_size = coords.size() * sizeof(uint64_t);
   std::vector<int> a = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
   uint64_t a_size = a.size() * sizeof(int);
-  std::vector<uint64_t> b_off = {0,
-                                 sizeof(int),
-                                 3 * sizeof(int),
-                                 6 * sizeof(int),
-                                 9 * sizeof(int),
-                                 11 * sizeof(int),
-                                 15 * sizeof(int),
-                                 16 * sizeof(int),
-                                 17 * sizeof(int),
-                                 18 * sizeof(int)};
+  std::vector<uint64_t> b_off = {
+      0,
+      sizeof(int),
+      3 * sizeof(int),
+      6 * sizeof(int),
+      9 * sizeof(int),
+      11 * sizeof(int),
+      15 * sizeof(int),
+      16 * sizeof(int),
+      17 * sizeof(int),
+      18 * sizeof(int)};
   uint64_t b_off_size = b_off.size() * sizeof(uint64_t);
   std::vector<int> b_val = {
       1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 6, 6, 7, 8, 9, 10};
@@ -291,12 +294,13 @@ void SubarrayPartitionerSparseFx::write_default_1d_float_array() {
   uint64_t coords_size = coords.size() * sizeof(float);
   std::vector<int> a = {1, 2, 3, 4, 5, 6};
   uint64_t a_size = a.size() * sizeof(int);
-  std::vector<uint64_t> b_off = {0,
-                                 sizeof(int),
-                                 3 * sizeof(int),
-                                 6 * sizeof(int),
-                                 9 * sizeof(int),
-                                 11 * sizeof(int)};
+  std::vector<uint64_t> b_off = {
+      0,
+      sizeof(int),
+      3 * sizeof(int),
+      6 * sizeof(int),
+      9 * sizeof(int),
+      11 * sizeof(int)};
   uint64_t b_off_size = b_off.size() * sizeof(uint64_t);
   std::vector<int> b_val = {1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 6, 6};
   uint64_t b_val_size = b_val.size() * sizeof(int);
@@ -314,12 +318,13 @@ void SubarrayPartitionerSparseFx::write_default_2d_array() {
   uint64_t coords_size = coords.size() * sizeof(uint64_t);
   std::vector<int> a = {1, 2, 3, 4, 5, 6};
   uint64_t a_size = a.size() * sizeof(int);
-  std::vector<uint64_t> b_off = {0,
-                                 sizeof(int),
-                                 3 * sizeof(int),
-                                 6 * sizeof(int),
-                                 9 * sizeof(int),
-                                 11 * sizeof(int)};
+  std::vector<uint64_t> b_off = {
+      0,
+      sizeof(int),
+      3 * sizeof(int),
+      6 * sizeof(int),
+      9 * sizeof(int),
+      11 * sizeof(int)};
   uint64_t b_off_size = b_off.size() * sizeof(uint64_t);
   std::vector<int> b_val = {1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 6, 6};
   uint64_t b_val_size = b_val.size() * sizeof(int);
@@ -340,10 +345,9 @@ void SubarrayPartitionerSparseFx::test_subarray_partitioner(
     uint64_t budget,
     bool unsplittable) {
   Subarray subarray;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray);
 
-  ThreadPool tp;
-  CHECK(tp.init(4).ok());
+  ThreadPool tp(4);
   Config config;
   SubarrayPartitioner subarray_partitioner(
       &config,
@@ -371,10 +375,9 @@ void SubarrayPartitionerSparseFx::test_subarray_partitioner(
     uint64_t memory_budget_var,
     bool unsplittable) {
   Subarray subarray;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray);
 
-  ThreadPool tp;
-  CHECK(tp.init(4).ok());
+  ThreadPool tp(4);
   Config config;
   SubarrayPartitioner subarray_partitioner(
       &config,
@@ -400,10 +403,9 @@ void SubarrayPartitionerSparseFx::test_subarray_partitioner(
     uint64_t budget_var,
     bool unsplittable) {
   Subarray subarray;
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray);
 
-  ThreadPool tp;
-  CHECK(tp.init(4).ok());
+  ThreadPool tp(4);
   Config config;
   SubarrayPartitioner subarray_partitioner(
       &config,
@@ -682,10 +684,9 @@ TEST_CASE_METHOD(
   std::vector<SubarrayRanges<uint64_t>> partitions_after = {
       {{3, 3}}, {{4, 4}}, {{5, 6}}, {{7, 10}}, {{11, 18}}};
 
-  create_subarray(array_->array_, ranges, subarray_layout, &subarray);
+  create_subarray(array_->array(), ranges, subarray_layout, &subarray);
 
-  ThreadPool tp;
-  CHECK(tp.init(4).ok());
+  ThreadPool tp(4);
   Config config;
   SubarrayPartitioner subarray_partitioner(
       &config,
@@ -933,8 +934,8 @@ TEST_CASE_METHOD(
     "[SubarrayPartitioner][sparse][1D][MR][split_once]") {
   Layout subarray_layout;
   SubarrayRanges<uint64_t> ranges = {{5, 10, 25, 27, 33, 50}};
-  std::vector<SubarrayRanges<uint64_t>> partitions = {{{5, 10, 25, 27}},
-                                                      {{33, 50}}};
+  std::vector<SubarrayRanges<uint64_t>> partitions = {
+      {{5, 10, 25, 27}}, {{33, 50}}};
   uint64_t budget = 4 * sizeof(int);
   std::string attr = "a";
   bool unsplittable = false;
@@ -2285,12 +2286,9 @@ TEST_CASE_METHOD(
 
   // Check unsplittable
   tiledb::sm::Subarray subarray(
-      array->array_, layout, &g_helper_stats, g_helper_logger());
-  tiledb::sm::Range r;
-  r.set_str_range("bb", "bb");
-  subarray.add_range(0, std::move(r), true);
-  ThreadPool tp;
-  CHECK(tp.init(4).ok());
+      array->array().get(), layout, &g_helper_stats, g_helper_logger());
+  CHECK_NOTHROW(subarray.add_range(0, Range("bb", "bb"), true));
+  ThreadPool tp(4);
   Config config;
   SubarrayPartitioner partitioner(
       &config,
@@ -2317,16 +2315,15 @@ TEST_CASE_METHOD(
   auto partition = partitioner.current();
   CHECK(partition.range_num() == 1);
   const Range* range = nullptr;
-  partition.get_range(0, 0, &range);
+  CHECK_NOTHROW(partition.get_range(0, 0, &range));
   CHECK(range != nullptr);
   CHECK(range->start_str() == std::string("bb", 2));
   CHECK(range->end_str() == std::string("bb", 2));
 
   // Check full
   tiledb::sm::Subarray subarray_full(
-      array->array_, layout, &g_helper_stats, g_helper_logger());
-  r.set_str_range("a", "bb");
-  subarray_full.add_range(0, std::move(r), true);
+      array->array().get(), layout, &g_helper_stats, g_helper_logger());
+  CHECK_NOTHROW(subarray_full.add_range(0, Range("a", "bb"), true));
   SubarrayPartitioner partitioner_full(
       &config,
       subarray_full,
@@ -2345,16 +2342,15 @@ TEST_CASE_METHOD(
   CHECK(!unsplittable);
   partition = partitioner_full.current();
   CHECK(partition.range_num() == 1);
-  partition.get_range(0, 0, &range);
+  CHECK_NOTHROW(partition.get_range(0, 0, &range));
   CHECK(range != nullptr);
   CHECK(range->start_str() == std::string("a", 1));
   CHECK(range->end_str() == std::string("bb", 2));
 
   // Check split
   tiledb::sm::Subarray subarray_split(
-      array->array_, layout, &g_helper_stats, g_helper_logger());
-  r.set_str_range("a", "bb");
-  subarray_split.add_range(0, std::move(r), true);
+      array->array().get(), layout, &g_helper_stats, g_helper_logger());
+  CHECK_NOTHROW(subarray_split.add_range(0, Range("a", "bb"), true));
   SubarrayPartitioner partitioner_split(
       &config,
       subarray_split,
@@ -2374,7 +2370,7 @@ TEST_CASE_METHOD(
   CHECK(!unsplittable);
   partition = partitioner_split.current();
   CHECK(partition.range_num() == 1);
-  partition.get_range(0, 0, &range);
+  CHECK_NOTHROW(partition.get_range(0, 0, &range));
   CHECK(range != nullptr);
   CHECK(range->start_str() == std::string("a", 1));
   CHECK(range->end_str() == std::string("a\x7F", 2));
@@ -2382,7 +2378,7 @@ TEST_CASE_METHOD(
   CHECK(!unsplittable);
   partition = partitioner_split.current();
   CHECK(partition.range_num() == 1);
-  partition.get_range(0, 0, &range);
+  CHECK_NOTHROW(partition.get_range(0, 0, &range));
   CHECK(range != nullptr);
   CHECK(range->start_str() == std::string("b", 1));
   CHECK(range->end_str() == std::string("bb", 2));
@@ -2390,9 +2386,8 @@ TEST_CASE_METHOD(
 
   // Check no split 2 MBRs
   tiledb::sm::Subarray subarray_no_split(
-      array->array_, layout, &g_helper_stats, g_helper_logger());
-  r.set_str_range("bb", "cc");
-  subarray_no_split.add_range(0, std::move(r), true);
+      array->array().get(), layout, &g_helper_stats, g_helper_logger());
+  CHECK_NOTHROW(subarray_no_split.add_range(0, Range("bb", "cc"), true));
   SubarrayPartitioner partitioner_no_split(
       &config,
       subarray_no_split,
@@ -2413,16 +2408,15 @@ TEST_CASE_METHOD(
   CHECK(!unsplittable);
   partition = partitioner_no_split.current();
   CHECK(partition.range_num() == 1);
-  partition.get_range(0, 0, &range);
+  CHECK_NOTHROW(partition.get_range(0, 0, &range));
   CHECK(range != nullptr);
   CHECK(range->start_str() == std::string("bb", 2));
   CHECK(range->end_str() == std::string("cc", 2));
 
   // Check split 2 MBRs
   tiledb::sm::Subarray subarray_split_2(
-      array->array_, layout, &g_helper_stats, g_helper_logger());
-  r.set_str_range("bb", "cc");
-  subarray_split_2.add_range(0, std::move(r), true);
+      array->array().get(), layout, &g_helper_stats, g_helper_logger());
+  CHECK_NOTHROW(subarray_split_2.add_range(0, Range("bb", "cc"), true));
   SubarrayPartitioner partitioner_split_2(
       &config,
       subarray_split_2,
@@ -2443,7 +2437,7 @@ TEST_CASE_METHOD(
   CHECK(!unsplittable);
   partition = partitioner_split_2.current();
   CHECK(partition.range_num() == 1);
-  partition.get_range(0, 0, &range);
+  CHECK_NOTHROW(partition.get_range(0, 0, &range));
   CHECK(range != nullptr);
   CHECK(range->start_str() == std::string("bb", 2));
   CHECK(range->end_str() == std::string("b\x7F", 2));
@@ -2451,7 +2445,7 @@ TEST_CASE_METHOD(
   CHECK(!unsplittable);
   partition = partitioner_split_2.current();
   CHECK(partition.range_num() == 1);
-  partition.get_range(0, 0, &range);
+  CHECK_NOTHROW(partition.get_range(0, 0, &range));
   CHECK(range != nullptr);
   CHECK(range->start_str() == std::string("c", 1));
   CHECK(range->end_str() == std::string("cc", 2));
@@ -2559,12 +2553,9 @@ TEST_CASE_METHOD(
   }
 
   tiledb::sm::Subarray subarray(
-      array->array_, layout, &g_helper_stats, g_helper_logger());
-  tiledb::sm::Range r;
-  r.set_str_range("cc", "ccd");
-  subarray.add_range(0, std::move(r), true);
-  ThreadPool tp;
-  CHECK(tp.init(4).ok());
+      array->array().get(), layout, &g_helper_stats, g_helper_logger());
+  CHECK_NOTHROW(subarray.add_range(0, Range("cc", "ccd"), true));
+  ThreadPool tp(4);
   Config config;
   SubarrayPartitioner partitioner(
       &config,

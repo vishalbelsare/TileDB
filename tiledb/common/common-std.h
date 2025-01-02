@@ -36,6 +36,27 @@
 #ifndef TILEDB_COMMON_COMMON_STD_H
 #define TILEDB_COMMON_COMMON_STD_H
 
+#include <cstdint>
+
+/**
+ * Size type for anything in external storage.
+ *
+ * Note that on some platforms `storage_size_t` may be larger than `size_t`. It
+ * should not be assumed that anything in external storage will fit in memory
+ * (even virtual memory).
+ */
+using storage_size_t = uint64_t;
+
+/**
+ * Type for anything format version related.
+ */
+using format_version_t = uint32_t;
+
+/**
+ * Type for anything offsets related.
+ */
+using offsets_t = uint64_t;
+
 /*
  * Value manipulation
  */
@@ -61,6 +82,11 @@ using std::tuple;
 #include <optional>
 using std::nullopt;
 using std::optional;
+
+#include <span>
+using std::span;
+
+using std::size_t;
 
 /**
  * @section Reference

@@ -36,6 +36,11 @@
 #include <unordered_map>
 
 #include "tiledb/common/status.h"
+#include "tiledb/sm/config/config.h"
+
+#ifdef TILEDB_SERIALIZATION
+#include "tiledb/sm/serialization/capnp_utils.h"
+#endif
 
 using namespace tiledb::common;
 
@@ -43,12 +48,109 @@ namespace tiledb {
 namespace sm {
 
 class Array;
-class Buffer;
 class ArraySchema;
 class Dimension;
+class MemoryTracker;
+class SerializationBuffer;
+class URI;
 enum class SerializationType : uint8_t;
 
 namespace serialization {
+
+class LoadArraySchemaRequest {
+ public:
+  explicit LoadArraySchemaRequest(const Config& config)
+      : include_enumerations_latest_schema_(config.get<bool>(
+            "rest.load_enumerations_on_array_open", Config::must_find))
+      , include_enumerations_all_schemas_(config.get<bool>(
+            "rest.load_enumerations_on_array_open", Config::must_find)) {
+  }
+
+  inline bool include_enumerations_latest_schema() const {
+    return include_enumerations_latest_schema_;
+  }
+
+  inline bool include_enumerations_all_schemas() const {
+    return include_enumerations_all_schemas_;
+  }
+
+ private:
+  bool include_enumerations_latest_schema_;
+  bool include_enumerations_all_schemas_;
+};
+
+#ifdef TILEDB_SERIALIZATION
+/**
+ * Serialize a filter to cap'n proto object
+ *
+ * @param filter Filter to serialize.
+ * @param filter_builder Cap'n proto class.
+ * @return Status
+ */
+Status filter_to_capnp(
+    const Filter* filter, capnp::Filter::Builder* filter_builder);
+
+/**
+ * Deserialize a filter from a cap'n proto object
+ *
+ * @param filter_reader Cap'n proto object
+ * @param datatype Datatype the filter operates on within it's pipeline.
+ * @return Status
+ */
+tuple<Status, optional<shared_ptr<Filter>>> filter_from_capnp(
+    const capnp::Filter::Reader& filter_reader, Datatype datatype);
+
+/**
+ * Serialize an array schema to cap'n proto object
+ *
+ * @param array_schema Array schema to serialize
+ * @param array_schema_builder Cap'n proto class
+ * @param client_side indicate if client or server side. If server side we won't
+ * serialize the array URI
+ * @return Status
+ */
+Status array_schema_to_capnp(
+    const ArraySchema& array_schema,
+    capnp::ArraySchema::Builder* array_schema_builder,
+    const bool client_side);
+
+/**
+ * Deserialize an array schema from a cap'n proto object
+ *
+ * @param schema_reader Cap'n proto object
+ * @param uri A URI object
+ * @param memory_tracker The memory tracker to use.
+ * @return a new ArraySchema
+ */
+shared_ptr<ArraySchema> array_schema_from_capnp(
+    const capnp::ArraySchema::Reader& schema_reader,
+    const URI& uri,
+    shared_ptr<MemoryTracker> memory_tracker);
+
+/**
+ * Serialize a dimension label to cap'n proto object
+ *
+ * @param dim_label Dimension label to serialize
+ * @param builder Cap'n proto class.
+ * @param client_side Indicate if client or server side.
+ */
+void dimension_label_to_capnp(
+    const DimensionLabel& dimension_label,
+    capnp::DimensionLabel::Builder* dim_label_builder,
+    const bool client_side);
+
+/**
+ * Deserialize a dimension label from a cap'n proto object
+ *
+ * @param reader Cap'n proto reader object.
+ * @param memory_tracker The memory tracker to use.
+ * @return A new DimensionLabel.
+ */
+shared_ptr<DimensionLabel> dimension_label_from_capnp(
+    const capnp::DimensionLabel::Reader& reader,
+    shared_ptr<MemoryTracker> memory_tracker);
+
+#endif  // TILEDB_SERIALIZATION
 
 /**
  * Serialize an array schema via Cap'n Prto
@@ -60,58 +162,63 @@ namespace serialization {
  * @return
  */
 Status array_schema_serialize(
-    ArraySchema* array_schema,
+    const ArraySchema& array_schema,
     SerializationType serialize_type,
-    Buffer* serialized_buffer,
+    SerializationBuffer& serialized_buffer,
     const bool client_side);
 
-Status array_schema_deserialize(
-    ArraySchema** array_schema,
+shared_ptr<ArraySchema> array_schema_deserialize(
     SerializationType serialize_type,
-    const Buffer& serialized_buffer);
+    span<const char> serialized_buffer,
+    shared_ptr<MemoryTracker> memory_tracker);
 
 Status nonempty_domain_serialize(
     const Array* array,
     const void* nonempty_domain,
     bool is_empty,
     SerializationType serialize_type,
-    Buffer* serialized_buffer);
+    SerializationBuffer& serialized_buffer);
 
 Status nonempty_domain_deserialize(
     const Array* array,
-    const Buffer& serialized_buffer,
+    span<const char> serialized_buffer,
     SerializationType serialize_type,
     void* nonempty_domain,
     bool* is_empty);
 
 Status nonempty_domain_serialize(
-    Array* array, SerializationType serialize_type, Buffer* serialized_buffer);
+    Array* array,
+    SerializationType serialize_type,
+    SerializationBuffer& serialized_buffer);
 
 Status nonempty_domain_deserialize(
     Array* array,
-    const Buffer& serialized_buffer,
+    span<const char> serialized_buffer,
     SerializationType serialize_type);
 
-Status max_buffer_sizes_serialize(
-    Array* array,
-    const void* subarray,
-    SerializationType serialize_type,
-    Buffer* serialized_buffer);
+void serialize_load_array_schema_request(
+    const Config& config,
+    const LoadArraySchemaRequest& req,
+    SerializationType serialization_type,
+    SerializationBuffer& data);
 
-Status max_buffer_sizes_deserialize(
-    const ArraySchema* schema,
-    const Buffer& serialized_buffer,
-    SerializationType serialize_type,
-    std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
-        buffer_sizes);
+LoadArraySchemaRequest deserialize_load_array_schema_request(
+    SerializationType serialization_type, span<const char> data);
 
-Status array_metadata_serialize(
-    Array* array, SerializationType serialize_type, Buffer* serialized_buffer);
+void serialize_load_array_schema_response(
+    const Array& array,
+    SerializationType serialization_type,
+    SerializationBuffer& data);
 
-Status array_metadata_deserialize(
-    Array* array,
-    SerializationType serialize_type,
-    const Buffer& serialized_buffer);
+std::tuple<
+    shared_ptr<ArraySchema>,
+    std::unordered_map<std::string, shared_ptr<ArraySchema>>>
+deserialize_load_array_schema_response(
+    const URI& uri,
+    const Config& config,
+    SerializationType serialization_type,
+    span<const char> data,
+    shared_ptr<MemoryTracker> memory_tracker);
 
 }  // namespace serialization
 }  // namespace sm

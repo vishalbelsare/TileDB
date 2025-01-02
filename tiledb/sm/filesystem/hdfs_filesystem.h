@@ -41,11 +41,19 @@
 
 #include "tiledb/common/status.h"
 
-#include "hadoop/hdfs.h"
-
 using namespace tiledb::common;
 
+// Declarations copied from hadoop/hdfs.h
+// We do not include it here to avoid leaking it to consuming code.
+struct hdfs_internal;
+typedef struct hdfs_internal* hdfsFS;
+
 namespace tiledb {
+
+namespace common::filesystem {
+class directory_entry;
+}
+
 namespace sm {
 
 class Config;
@@ -182,6 +190,16 @@ class HDFS {
    * @return Status
    */
   Status ls(const URI& uri, std::vector<std::string>* paths);
+
+  /**
+   *
+   * Lists objects and object information that start with `uri`.
+   *
+   * @param uri The parent path to list sub-paths.
+   * @return A list of directory_entry objects
+   */
+  tuple<Status, optional<std::vector<filesystem::directory_entry>>>
+  ls_with_sizes(const URI& uri);
 
   /**
    * Returns the size of the input file with a given URI in bytes.

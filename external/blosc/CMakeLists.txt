@@ -54,24 +54,15 @@ if(SSE2_DETECTED)
     )
 endif()
 
-#
-# Blosc requires a pthread library. There's a substitute one available for
-# Windows for use with Visual C++, which doesn't have it. Other compilers do,
-# however, and we use it if it's available. This avoids duplicate link symbols
-# in case something else has a pthread dependency.
-#
-find_package(Threads REQUIRED)
-message("Threads_FOUND=${Threads_FOUND}")
-message("CMAKE_THREAD_LIBS_INIT=${CMAKE_THREAD_LIBS_INIT}")
-message("CMAKE_USE_WIN32_THREADS_INIT=${CMAKE_USE_WIN32_THREADS_INIT}")
-message("CMAKE_USE_PTHREADS_INIT=${CMAKE_USE_PTHREADS_INIT}")
-message("CMAKE_HP_PTHREADS_INIT=${CMAKE_HP_PTHREADS_INIT}")
-message("CMAKE_HAVE_PTHREAD_H=${CMAKE_HAVE_PTHREAD_H}")
 
-if (CMAKE_USE_PTHREADS_INIT)
-  message("Using system-provided pthread")
-elseif(CMAKE_USE_WIN32_THREADS_INIT)
-  message("Using blosc-provided pthread substitute for Win32")
+# Blosc requires a pthread library. There's a substitute one available for Windows for
+# use with Visual C++, which doesn't have it. The following checks if pthreads is
+# already enable, and adds the substitute Windows pthread library for Visual C++.
+# Variables used for checking are set by CMake FindThreads module.
+if (CMAKE_USE_PTHREADS_INIT AND NOT MSVC)
+  message(DEBUG "Using system-provided pthread")
+elseif(CMAKE_USE_WIN32_THREADS_INIT OR MSVC)
+  message(DEBUG "Using blosc-provided pthread substitute for Win32")
   list(APPEND SOURCES
     ${SOURCE_DIR}/src/win32/pthread.c
   )
@@ -83,7 +74,7 @@ endif()
 # -w is common to gcc and MSVC
 set(TILEDB_BLOSC_COMPILE_OPTIONS "-w")
 # If we found pthreads, activate it by defining PTHREAD_AVAILABLE.
-if (CMAKE_USE_PTHREADS_INIT)
+if (CMAKE_USE_PTHREADS_INIT AND NOT MSVC)
   string(APPEND TILEDB_BLOSC_COMPILE_OPTIONS ";-DPTHREAD_AVAILABLE")
 endif()
 
@@ -125,4 +116,3 @@ set(TileDB_blosc_SOURCES ${SOURCES} PARENT_SCOPE)
 set(TileDB_blosc_INCLUDE_DIRS ${SOURCE_DIR}/include PARENT_SCOPE)
 set(TileDB_blosc_COMPILE_OPTIONS ${TILEDB_BLOSC_COMPILE_OPTIONS} PARENT_SCOPE)
 set(TileDB_blosc_LINK_OPTIONS ${CMAKE_THREAD_LIBS_INIT} PARENT_SCOPE)
-

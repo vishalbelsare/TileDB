@@ -88,15 +88,38 @@ void GlobalStats::set_enabled(bool enabled) {
 }
 
 void GlobalStats::reset() {
+  iterate([](Stats& stat) { stat.reset(); });
+}
+
+void GlobalStats::register_stats(const shared_ptr<Stats>& stats) {
   std::unique_lock<std::mutex> ul(mtx_);
-  for (auto& register_stat : registered_stats_) {
-    register_stat->reset();
+  registered_stats_.emplace_back(stats);
+}
+
+template <class FuncT>
+void GlobalStats::iterate(const FuncT& f) {
+  std::unique_lock<std::mutex> ul(mtx_);
+  for (auto register_stat = registered_stats_.begin();
+       register_stat != registered_stats_.end();) {
+    if (std::shared_ptr<Stats> stat(register_stat->lock()); stat.use_count()) {
+      f(*stat);
+      ++register_stat;
+    } else {
+      register_stat = registered_stats_.erase(register_stat);
+    }
   }
 }
 
-void GlobalStats::register_stats(const tdb_shared_ptr<Stats>& stats) {
+template <class FuncT>
+void GlobalStats::iterate(const FuncT& f) const {
   std::unique_lock<std::mutex> ul(mtx_);
-  registered_stats_.emplace_back(stats);
+  for (auto register_stat = registered_stats_.begin();
+       register_stat != registered_stats_.end();) {
+    if (std::shared_ptr<Stats> stat(register_stat->lock()); stat.use_count()) {
+      f(*stat);
+    }
+    ++register_stat;
+  }
 }
 
 /* ****************************** */
@@ -104,17 +127,14 @@ void GlobalStats::register_stats(const tdb_shared_ptr<Stats>& stats) {
 /* ****************************** */
 
 std::string GlobalStats::dump_registered_stats() const {
-  std::unique_lock<std::mutex> ul(mtx_);
-
   std::stringstream ss;
 
   ss << "[\n";
 
   bool printed_first_stats = false;
-  auto iter = registered_stats_.begin();
-  while (iter != registered_stats_.end()) {
+  iterate([&](Stats& stat) -> void {
     const uint64_t indent_size = 2;
-    const std::string stats_dump = (*iter)->dump(indent_size, 1);
+    const std::string stats_dump = stat.dump(indent_size, 1);
     if (!stats_dump.empty()) {
       if (printed_first_stats) {
         ss << ",\n";
@@ -122,9 +142,7 @@ std::string GlobalStats::dump_registered_stats() const {
       ss << stats_dump;
       printed_first_stats = true;
     }
-
-    ++iter;
-  }
+  });
 
   ss << "\n]\n";
 

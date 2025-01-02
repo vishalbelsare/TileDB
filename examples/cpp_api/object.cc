@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -98,7 +98,7 @@ void create_array(const std::string& array_name, tiledb_array_type_t type) {
   ArraySchema schema(ctx, type);
   schema.set_domain(domain).set_order({{TILEDB_ROW_MAJOR, TILEDB_ROW_MAJOR}});
   schema.add_attribute(Attribute::create<int>(ctx, "a"));
-  Array::create(array_name, schema);
+  Array::create(ctx, array_name, schema);
 }
 
 void move_remove_obj() {
@@ -111,6 +111,10 @@ void move_remove_obj() {
 void create_hierarchy() {
   // Create groups
   tiledb::Context ctx;
+  tiledb::VFS vfs(ctx);
+  if (vfs.is_dir("my_group"))
+    vfs.remove_dir("my_group");
+
   tiledb::create_group(ctx, "my_group");
   tiledb::create_group(ctx, "my_group/dense_arrays");
   tiledb::create_group(ctx, "my_group/sparse_arrays");

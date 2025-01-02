@@ -43,16 +43,17 @@ namespace tiledb {
 namespace sm {
 
 class Array;
-class Buffer;
 class ArraySchema;
 class ArraySchemaEvolution;
 class Dimension;
+class MemoryTracker;
+class SerializationBuffer;
 enum class SerializationType : uint8_t;
 
 namespace serialization {
 
 /**
- * Serialize an array schema evolution via Cap'n Prto
+ * Serialize an array schema evolution via Cap'n Proto
  * @param array_schema_evolution evolution object to serialize
  * @param serialize_type format to serialize into Cap'n Proto or JSON
  * @param serialized_buffer buffer to store serialized bytes in
@@ -63,13 +64,24 @@ namespace serialization {
 Status array_schema_evolution_serialize(
     ArraySchemaEvolution* array_schema_evolution,
     SerializationType serialize_type,
-    Buffer* serialized_buffer,
+    SerializationBuffer& serialized_buffer,
     const bool client_side);
 
+/**
+ * Deserialize an array schema evolution via Cap'n Proto
+ * @param array_schema_evolution pointer to store evolution object in
+ * @param config associated config object
+ * @param serialize_type format to serialize into Cap'n Proto or JSON
+ * @param serialized_buffer buffer where serialized bytes are stored
+ * @param memory_tracker memory tracker associated with the evolution object
+ * @return
+ */
 Status array_schema_evolution_deserialize(
     ArraySchemaEvolution** array_schema_evolution,
+    const Config& config,
     SerializationType serialize_type,
-    const Buffer& serialized_buffer);
+    span<const char> serialized_buffer,
+    shared_ptr<MemoryTracker> memory_tracker);
 
 }  // namespace serialization
 }  // namespace sm

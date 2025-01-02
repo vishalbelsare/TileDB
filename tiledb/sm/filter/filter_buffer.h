@@ -37,6 +37,7 @@
 #include <memory>
 #include <vector>
 
+#include "tiledb/common/common.h"
 #include "tiledb/common/heap_memory.h"
 #include "tiledb/common/status.h"
 #include "tiledb/sm/buffer/buffer.h"
@@ -48,6 +49,7 @@ namespace sm {
 
 class Buffer;
 class FilterStorage;
+enum class Datatype : uint8_t;
 
 /**
  * Class that manages an ordered list of multiple separate buffers and offers as
@@ -107,6 +109,22 @@ class FilterBuffer {
    * making up this FilterBuffer.
    */
   std::vector<ConstBuffer> buffers() const;
+
+  /**
+   * Return a list of ConstBuffers representing the multiple separate buffers
+   * making up this FilterBuffer reinterpreted as Datatype. If datatype is ANY,
+   * buffers will be returned unchanged.
+   *
+   * @param datatype Datatype to reinterpret buffer data.
+   */
+  std::vector<ConstBuffer> buffers_as(Datatype datatype) const;
+
+  /**
+   * Return a list of ConstBuffers representing the multiple separate buffers
+   * making up this FilterBuffer reinterpreted as type T.
+   */
+  template <typename T>
+  std::vector<ConstBuffer> buffers_as() const;
 
   /**
    * Return a pointer to the underlying buffer at the given index. It is allowed
@@ -265,7 +283,7 @@ class FilterBuffer {
  private:
   /**
    * Helper class that represents a Buffer or a "view" on an underlying Buffer.
-   * In either case a tdb_shared_ptr to the underlying Buffer is maintained,
+   * In either case a shared_ptr to the underlying Buffer is maintained,
    * which prevents FilterStorage from marking a buffer as available as long as
    * there is still an active view on it.
    */
@@ -274,7 +292,7 @@ class FilterBuffer {
     /**
      * Constructor. Initializes a non-view on the given Buffer.
      */
-    explicit BufferOrView(const tdb_shared_ptr<Buffer>& buffer);
+    explicit BufferOrView(const shared_ptr<Buffer>& buffer);
 
     /**
      * Constructor. Initializes a view on the given Buffer.
@@ -284,7 +302,7 @@ class FilterBuffer {
      * @param nbytes Length of view in bytes.
      */
     BufferOrView(
-        const tdb_shared_ptr<Buffer>& buffer, uint64_t offset, uint64_t nbytes);
+        const shared_ptr<Buffer>& buffer, uint64_t offset, uint64_t nbytes);
 
     /** Move constructor. */
     BufferOrView(BufferOrView&& other);
@@ -311,17 +329,17 @@ class FilterBuffer {
     bool is_view() const;
 
     /** Return a pointer to the underlying buffer. */
-    tdb_shared_ptr<Buffer> underlying_buffer() const;
+    shared_ptr<Buffer> underlying_buffer() const;
 
    private:
     /**
      * Pointer to the underlying buffer, regardless of whether this instance is
      * a view or not.
      */
-    tdb_shared_ptr<Buffer> underlying_buffer_;
+    shared_ptr<Buffer> underlying_buffer_;
 
     /** True if this instance is a view on the underlying buffer. */
-    bool is_view_;
+    bool is_view_{false};
 
     /**
      * If this instance is a view, the view Buffer (which does not own its

@@ -1,4 +1,6 @@
-# Tile
+---
+title: Tile
+---
 
 ## Main Structure
 
@@ -11,7 +13,7 @@ Internally tile data is divided into “chunks.” Every tile is at least one ch
 | … | … | … |
 | Chunk N | [Chunk](#chunk-format) | N-th chunk in the tile |
 
-## Chunk Format 
+## Chunk Format
 
 A chunk has the following on-disk format:
 
@@ -32,6 +34,8 @@ The “chunk metadata” before the actual "chunk filtered data" depend on the p
 The “chunk filtered data” bytes contain the final bytes of the chunk after being passed through the entire pipeline. When reading tiles from disk, the filter pipeline is run in the reverse order.
 
 Internally, any filter in a filter pipeline produces two arrays of data as output: a metadata byte array and a filtered data byte array. Additionally, these output byte arrays can be arbitrarily separated into “parts” by any filter. Typically, when a next filter receives the output of the previous filter as its input, it will filter each “part” independently.
+
+_New in version 11_ Cells of arrays are not split across chunks within a tile.
 
 ### Byteshuffle Filter
 
@@ -90,7 +94,7 @@ The type `WindowMD` has the format:
 | **Field** | **Type** | **Description** |
 | :--- | :--- | :--- |
 | Window value offset | `T` | Offset applied to values in the output window, where `T` is the original datatype of the tile values. |
-| Bit width of reduced type | `uint8_t` | Number of bits in the new datatype of the values in the output window |
+| Bit width of reduced type | `uint8_t` | Number of bits in the new datatype of the values in the output window. Can be 8, 16, 32 or 64. |
 | Window length | `uint32_t` | Number of bytes in output window data. |
 
 The bit width reduction filter produces output data in the format:
@@ -100,6 +104,9 @@ The bit width reduction filter produces output data in the format:
 | Window 1 | `uint8_t[]` | Window 1 data \(possibly-reduced width elements\) |
 | … | … | … |
 | Window N | `uint8_t[]` | Window N data \(possibly-reduced width elements\) |
+
+> [!NOTE]
+> Prior to version 20, the bit width reduction filter had no effect on date and time types.
 
 ### Positive Delta Encoding Filter
 
@@ -126,6 +133,9 @@ The positive-delta encoding filter produces output data in the format:
 | Window 1 | `T[]` | Window 1 delta-encoded data |
 | … | … | … |
 | Window N | `T[]` | Window N delta-encoded data |
+
+> [!NOTE]
+> Prior to version 20, the positive delta encoding filter had no effect on date and time types.
 
 ### Compression Filters
 
@@ -183,7 +193,7 @@ The filter metadata for `TILEDB_FILTER_CHECKSUM_{MD5,SHA256}` has internal forma
 
 ### Encryption Filters
 
-If the array is **encrypted**, TileDB uses an extra internal filter `INTERNAL_FILTER_AES_256_GCM` for AES encryption.
+If the array is **encrypted**, TileDB uses an extra internal filter at the end of the pipeline for AES encryption.
 
 The encryption filter metadata have the following on-disk format:
 
@@ -191,37 +201,12 @@ The encryption filter metadata have the following on-disk format:
 | :--- | :--- | :--- |
 | Num metadata parts | `uint32_t` | Number of encrypted metadata parts |
 | Num data parts | `uint32_t` | Number of encrypted data parts |
-| AES Metadata Part 1 | `AESPartMD` | Metadata part 1 |
+| AES Metadata Part 1 | `AESPart` | Metadata part 1 |
 | … | … | … |
-| AES Metadata Part N | `AESPartMD` | Metadata part N |
+| AES Metadata Part N | `AESPart` | Metadata part N |
 | AES Data Part 1 | `AESPart` | Data part 1 |
 | … | … | … |
 | AES Data Part N | `AESPart` | Data part N |
-
-The `AESPartMD` field has the following on-disk format:
-
-| **Field** | **Type** | **Description** |
-| :--- | :--- | :--- |
-| Num metadata parts | `uint32_t` | Number of metadata parts |
-| Num data parts | `uint32_t` | Number of data parts |
-| Plaintext length for metadata part 1 | `uint32_t` | Number of bytes of plaintext metadata part 1 |
-| Ciphertext length for metadata part 1 | `uint32_t` | Number of bytes of ciphertext metadata part 1 |
-| IV bytes for metadata part 1 | `uint32_t` | Number of bytes of AES-256-GCM IV bytes for metadata part 1 |
-| Tag bytes for metadata part 1 | `uint32_t` | Number of bytes of AES-256-GCM tag for metadata part 1 |
-| … | … | … |
-| Plaintext length for metadata part N | `uint32_t` | Number of bytes of plaintext metadata part N |
-| Ciphertext length for metadata part N | `uint32_t` | Number of bytes of ciphertext metadata part N |
-| IV bytes for metadata part N | `uint32_t` | Number of bytes of AES-256-GCM IV bytes for metadata part N |
-| Tag bytes for metadata part N | `uint32_t` | Number of bytes of AES-256-GCM tag for metadata part N |
-| Plaintext length for data part 1 | `uint32_t` | Number of bytes of plaintext data part 1 |
-| Ciphertext length for data part 1 | `uint32_t` | Number of bytes of ciphertext data part 1 |
-| IV bytes for data part 1 | `uint32_t` | Number of bytes of AES-256-GCM IV bytes for data part 1 |
-| Tag bytes for data part 1 | `uint32_t` | Number of bytes of AES-256-GCM tag for data part 1 |
-| … | … | … |
-| Plaintext length for data part N | `uint32_t` | Number of bytes of plaintext data part N |
-| Ciphertext length for data part N | `uint32_t` | Number of bytes of ciphertext data part N |
-| IV bytes for data part N | `uint32_t` | Number of bytes of AES-256-GCM IV bytes for data part N |
-| Tag bytes for data part N | `uint32_t` | Number of bytes of AES-256-GCM tag for data part N |
 
 The original metadata is **not** included in the metadata output.
 
@@ -246,8 +231,3 @@ The data output of the encryption filter is:
 | Metadata part N | `uint8_t[]` |  The encrypted bytes of data part N |
 
 Note that the original input metadata in **not** part of the output.
-
-
-
-
-

@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,23 +36,34 @@
 
 #include "tiledb/common/status.h"
 #include "tiledb/sm/misc/constants.h"
+#include "tiledb/stdx/utility/to_underlying.h"
 
 #include <cassert>
 
 using namespace tiledb::common;
 
-namespace tiledb {
-namespace sm {
+namespace tiledb::sm {
+
+#if defined(_WIN32) && defined(TIME_MS)
+#pragma message("WARNING: Windows.h may have already been included before")
+#pragma message("         tiledb/sm/enums/datatype.h which will likely cause a")
+#pragma message("         syntax error while defining the Datatype enum class.")
+#endif
 
 /** Defines a datatype. */
 enum class Datatype : uint8_t {
 #define TILEDB_DATATYPE_ENUM(id) id
-#include "tiledb/sm/c_api/tiledb_enum.h"
+#include "tiledb/api/c_api/datatype/datatype_api_enum.h"
 #undef TILEDB_DATATYPE_ENUM
 };
 
-/** Returns the datatype size. */
-inline uint64_t datatype_size(Datatype type) {
+/**
+ *  Returns the datatype size.
+ *
+ *  This function also serves as a datatype validation function;
+ *  If 0 is returned, the input Datatype is invalid.
+ */
+inline uint64_t datatype_size(Datatype type) noexcept {
   switch (type) {
     case Datatype::INT32:
       return sizeof(int);
@@ -64,6 +75,14 @@ inline uint64_t datatype_size(Datatype type) {
       return sizeof(double);
     case Datatype::CHAR:
       return sizeof(char);
+    case Datatype::BLOB:
+      return sizeof(std::byte);
+    case Datatype::GEOM_WKB:
+      return sizeof(std::byte);
+    case Datatype::GEOM_WKT:
+      return sizeof(std::byte);
+    case Datatype::BOOL:
+      return sizeof(uint8_t);
     case Datatype::INT8:
       return sizeof(int8_t);
     case Datatype::UINT8:
@@ -132,6 +151,14 @@ inline const std::string& datatype_str(Datatype type) {
       return constants::float64_str;
     case Datatype::CHAR:
       return constants::char_str;
+    case Datatype::BLOB:
+      return constants::blob_str;
+    case Datatype::GEOM_WKB:
+      return constants::geom_wkb_str;
+    case Datatype::GEOM_WKT:
+      return constants::geom_wkt_str;
+    case Datatype::BOOL:
+      return constants::bool_str;
     case Datatype::INT8:
       return constants::int8_str;
     case Datatype::UINT8:
@@ -208,92 +235,99 @@ inline const std::string& datatype_str(Datatype type) {
 }
 
 /** Returns the datatype given a string representation. */
-inline Status datatype_enum(
-    const std::string& datatype_str, Datatype* datatype) {
+inline Datatype datatype_enum(const std::string& datatype_str) {
   if (datatype_str == constants::int32_str)
-    *datatype = Datatype::INT32;
+    return Datatype::INT32;
   else if (datatype_str == constants::int64_str)
-    *datatype = Datatype::INT64;
+    return Datatype::INT64;
   else if (datatype_str == constants::float32_str)
-    *datatype = Datatype::FLOAT32;
+    return Datatype::FLOAT32;
   else if (datatype_str == constants::float64_str)
-    *datatype = Datatype::FLOAT64;
+    return Datatype::FLOAT64;
   else if (datatype_str == constants::char_str)
-    *datatype = Datatype::CHAR;
+    return Datatype::CHAR;
+  else if (datatype_str == constants::blob_str)
+    return Datatype::BLOB;
+  else if (datatype_str == constants::geom_wkb_str)
+    return Datatype::GEOM_WKB;
+  else if (datatype_str == constants::geom_wkt_str)
+    return Datatype::GEOM_WKT;
+  else if (datatype_str == constants::bool_str)
+    return Datatype::BOOL;
   else if (datatype_str == constants::int8_str)
-    *datatype = Datatype::INT8;
+    return Datatype::INT8;
   else if (datatype_str == constants::uint8_str)
-    *datatype = Datatype::UINT8;
+    return Datatype::UINT8;
   else if (datatype_str == constants::int16_str)
-    *datatype = Datatype::INT16;
+    return Datatype::INT16;
   else if (datatype_str == constants::uint16_str)
-    *datatype = Datatype::UINT16;
+    return Datatype::UINT16;
   else if (datatype_str == constants::uint32_str)
-    *datatype = Datatype::UINT32;
+    return Datatype::UINT32;
   else if (datatype_str == constants::uint64_str)
-    *datatype = Datatype::UINT64;
+    return Datatype::UINT64;
   else if (datatype_str == constants::string_ascii_str)
-    *datatype = Datatype::STRING_ASCII;
+    return Datatype::STRING_ASCII;
   else if (datatype_str == constants::string_utf8_str)
-    *datatype = Datatype::STRING_UTF8;
+    return Datatype::STRING_UTF8;
   else if (datatype_str == constants::string_utf16_str)
-    *datatype = Datatype::STRING_UTF16;
+    return Datatype::STRING_UTF16;
   else if (datatype_str == constants::string_utf32_str)
-    *datatype = Datatype::STRING_UTF32;
+    return Datatype::STRING_UTF32;
   else if (datatype_str == constants::string_ucs2_str)
-    *datatype = Datatype::STRING_UCS2;
+    return Datatype::STRING_UCS2;
   else if (datatype_str == constants::string_ucs4_str)
-    *datatype = Datatype::STRING_UCS4;
+    return Datatype::STRING_UCS4;
   else if (datatype_str == constants::any_str)
-    *datatype = Datatype::ANY;
+    return Datatype::ANY;
   else if (datatype_str == constants::datetime_year_str)
-    *datatype = Datatype::DATETIME_YEAR;
+    return Datatype::DATETIME_YEAR;
   else if (datatype_str == constants::datetime_month_str)
-    *datatype = Datatype::DATETIME_MONTH;
+    return Datatype::DATETIME_MONTH;
   else if (datatype_str == constants::datetime_week_str)
-    *datatype = Datatype::DATETIME_WEEK;
+    return Datatype::DATETIME_WEEK;
   else if (datatype_str == constants::datetime_day_str)
-    *datatype = Datatype::DATETIME_DAY;
+    return Datatype::DATETIME_DAY;
   else if (datatype_str == constants::datetime_hr_str)
-    *datatype = Datatype::DATETIME_HR;
+    return Datatype::DATETIME_HR;
   else if (datatype_str == constants::datetime_min_str)
-    *datatype = Datatype::DATETIME_MIN;
+    return Datatype::DATETIME_MIN;
   else if (datatype_str == constants::datetime_sec_str)
-    *datatype = Datatype::DATETIME_SEC;
+    return Datatype::DATETIME_SEC;
   else if (datatype_str == constants::datetime_ms_str)
-    *datatype = Datatype::DATETIME_MS;
+    return Datatype::DATETIME_MS;
   else if (datatype_str == constants::datetime_us_str)
-    *datatype = Datatype::DATETIME_US;
+    return Datatype::DATETIME_US;
   else if (datatype_str == constants::datetime_ns_str)
-    *datatype = Datatype::DATETIME_NS;
+    return Datatype::DATETIME_NS;
   else if (datatype_str == constants::datetime_ps_str)
-    *datatype = Datatype::DATETIME_PS;
+    return Datatype::DATETIME_PS;
   else if (datatype_str == constants::datetime_fs_str)
-    *datatype = Datatype::DATETIME_FS;
+    return Datatype::DATETIME_FS;
   else if (datatype_str == constants::datetime_as_str)
-    *datatype = Datatype::DATETIME_AS;
+    return Datatype::DATETIME_AS;
   else if (datatype_str == constants::time_hr_str)
-    *datatype = Datatype::TIME_HR;
+    return Datatype::TIME_HR;
   else if (datatype_str == constants::time_min_str)
-    *datatype = Datatype::TIME_MIN;
+    return Datatype::TIME_MIN;
   else if (datatype_str == constants::time_sec_str)
-    *datatype = Datatype::TIME_SEC;
+    return Datatype::TIME_SEC;
   else if (datatype_str == constants::time_ms_str)
-    *datatype = Datatype::TIME_MS;
+    return Datatype::TIME_MS;
   else if (datatype_str == constants::time_us_str)
-    *datatype = Datatype::TIME_US;
+    return Datatype::TIME_US;
   else if (datatype_str == constants::time_ns_str)
-    *datatype = Datatype::TIME_NS;
+    return Datatype::TIME_NS;
   else if (datatype_str == constants::time_ps_str)
-    *datatype = Datatype::TIME_PS;
+    return Datatype::TIME_PS;
   else if (datatype_str == constants::time_fs_str)
-    *datatype = Datatype::TIME_FS;
+    return Datatype::TIME_FS;
   else if (datatype_str == constants::time_as_str)
-    *datatype = Datatype::TIME_AS;
+    return Datatype::TIME_AS;
   else {
-    return Status::Error("Invalid Datatype " + datatype_str);
+    throw std::runtime_error(
+        "Invalid Datatype string (\"" + datatype_str + "\")");
   }
-  return Status::Ok();
 }
 
 /** Returns true if the input datatype is a string type. */
@@ -307,10 +341,43 @@ inline bool datatype_is_string(Datatype type) {
 /** Returns true if the input datatype is an integer type. */
 inline bool datatype_is_integer(Datatype type) {
   return (
-      type == Datatype::INT8 || type == Datatype::UINT8 ||
-      type == Datatype::INT16 || type == Datatype::UINT16 ||
-      type == Datatype::INT32 || type == Datatype::UINT32 ||
-      type == Datatype::INT64 || type == Datatype::UINT64);
+      type == Datatype::BOOL || type == Datatype::INT8 ||
+      type == Datatype::UINT8 || type == Datatype::INT16 ||
+      type == Datatype::UINT16 || type == Datatype::INT32 ||
+      type == Datatype::UINT32 || type == Datatype::INT64 ||
+      type == Datatype::UINT64);
+}
+
+/**
+ * Return the largest integral value for the provided type.
+ *
+ * @param type The Datatype to return the maximum value of.
+ * @returns uint64_t The maximum integral value for the provided type.
+ */
+inline uint64_t datatype_max_integral_value(Datatype type) {
+  switch (type) {
+    case Datatype::BOOL:
+      return static_cast<uint64_t>(std::numeric_limits<uint8_t>::max());
+    case Datatype::INT8:
+      return static_cast<uint64_t>(std::numeric_limits<int8_t>::max());
+    case Datatype::UINT8:
+      return static_cast<uint64_t>(std::numeric_limits<uint8_t>::max());
+    case Datatype::INT16:
+      return static_cast<uint64_t>(std::numeric_limits<int16_t>::max());
+    case Datatype::UINT16:
+      return static_cast<uint64_t>(std::numeric_limits<uint16_t>::max());
+    case Datatype::INT32:
+      return static_cast<uint64_t>(std::numeric_limits<int32_t>::max());
+    case Datatype::UINT32:
+      return static_cast<uint64_t>(std::numeric_limits<uint32_t>::max());
+    case Datatype::INT64:
+      return static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+    case Datatype::UINT64:
+      return static_cast<uint64_t>(std::numeric_limits<uint64_t>::max());
+    default:
+      throw std::runtime_error(
+          "Datatype (" + datatype_str(type) + ") is not integral.");
+  }
 }
 
 /** Returns true if the input datatype is a real type. */
@@ -340,7 +407,133 @@ inline bool datatype_is_time(Datatype type) {
       type == Datatype::TIME_AS);
 }
 
-}  // namespace sm
-}  // namespace tiledb
+/** Returns true if the input datatype is a std::byte type. */
+inline bool datatype_is_byte(Datatype type) {
+  return (
+      type == Datatype::BLOB || type == Datatype::GEOM_WKB ||
+      type == Datatype::GEOM_WKT);
+}
+
+/** Returns true if the input datatype is a boolean type. */
+inline bool datatype_is_boolean(Datatype type) {
+  return (type == Datatype::BOOL);
+}
+
+/** Throws error if the input Datatype's enum is not between 0 and 43. */
+inline void ensure_datatype_is_valid(uint8_t datatype_enum) {
+  if (datatype_enum > 43) {
+    throw std::runtime_error(
+        "Invalid Datatype (" + std::to_string(datatype_enum) + ")");
+  }
+}
+
+/** Throws error if the input Datatype's enum is not between 0 and 43. */
+inline void ensure_datatype_is_valid(Datatype type) {
+  ensure_datatype_is_valid(::stdx::to_underlying(type));
+}
+
+/**
+ * Throws error if:
+ *
+ * the datatype string is not valid as a datatype.
+ * the datatype string's enum is not between 0 and 43.
+ **/
+inline void ensure_datatype_is_valid(const std::string& datatype_str) {
+  Datatype datatype_type = datatype_enum(datatype_str);
+  ensure_datatype_is_valid(datatype_type);
+}
+
+/** Throws an error if the input type is not supported for dimensions. */
+inline void ensure_dimension_datatype_is_valid(Datatype type) {
+  switch (type) {
+    case Datatype::INT32:
+    case Datatype::INT64:
+    case Datatype::FLOAT32:
+    case Datatype::FLOAT64:
+    case Datatype::INT8:
+    case Datatype::UINT8:
+    case Datatype::INT16:
+    case Datatype::UINT16:
+    case Datatype::UINT32:
+    case Datatype::UINT64:
+    case Datatype::STRING_ASCII:
+    case Datatype::DATETIME_YEAR:
+    case Datatype::DATETIME_MONTH:
+    case Datatype::DATETIME_WEEK:
+    case Datatype::DATETIME_DAY:
+    case Datatype::DATETIME_HR:
+    case Datatype::DATETIME_MIN:
+    case Datatype::DATETIME_SEC:
+    case Datatype::DATETIME_MS:
+    case Datatype::DATETIME_US:
+    case Datatype::DATETIME_NS:
+    case Datatype::DATETIME_PS:
+    case Datatype::DATETIME_FS:
+    case Datatype::DATETIME_AS:
+    case Datatype::TIME_HR:
+    case Datatype::TIME_MIN:
+    case Datatype::TIME_SEC:
+    case Datatype::TIME_MS:
+    case Datatype::TIME_US:
+    case Datatype::TIME_NS:
+    case Datatype::TIME_PS:
+    case Datatype::TIME_FS:
+    case Datatype::TIME_AS:
+      return;
+    default:
+      throw std::runtime_error(
+          "Datatype '" + datatype_str(type) +
+          "' is not a valid dimension datatype.");
+  }
+}
+
+/**
+ * Throws and error if the input type is not supported on attributes with
+ * increasing or decreasing order.
+ */
+inline void ensure_ordered_attribute_datatype_is_valid(Datatype type) {
+  switch (type) {
+    case Datatype::INT32:
+    case Datatype::INT64:
+    case Datatype::FLOAT32:
+    case Datatype::FLOAT64:
+    case Datatype::INT8:
+    case Datatype::UINT8:
+    case Datatype::INT16:
+    case Datatype::UINT16:
+    case Datatype::UINT32:
+    case Datatype::UINT64:
+    case Datatype::STRING_ASCII:
+    case Datatype::DATETIME_YEAR:
+    case Datatype::DATETIME_MONTH:
+    case Datatype::DATETIME_WEEK:
+    case Datatype::DATETIME_DAY:
+    case Datatype::DATETIME_HR:
+    case Datatype::DATETIME_MIN:
+    case Datatype::DATETIME_SEC:
+    case Datatype::DATETIME_MS:
+    case Datatype::DATETIME_US:
+    case Datatype::DATETIME_NS:
+    case Datatype::DATETIME_PS:
+    case Datatype::DATETIME_FS:
+    case Datatype::DATETIME_AS:
+    case Datatype::TIME_HR:
+    case Datatype::TIME_MIN:
+    case Datatype::TIME_SEC:
+    case Datatype::TIME_MS:
+    case Datatype::TIME_US:
+    case Datatype::TIME_NS:
+    case Datatype::TIME_PS:
+    case Datatype::TIME_FS:
+    case Datatype::TIME_AS:
+      return;
+    default:
+      throw std::runtime_error(
+          "Datatype '" + datatype_str(type) +
+          "' is not a valid datatype for an ordered attribute.");
+  }
+}
+
+}  // namespace tiledb::sm
 
 #endif  // TILEDB_DATATYPE_H

@@ -33,6 +33,9 @@
 #ifdef _WIN32
 
 #include "tiledb/sm/crypto/crypto_win32.h"
+
+#include <algorithm>
+#include <array>
 #include "tiledb/common/heap_memory.h"
 #include "tiledb/common/logger.h"
 #include "tiledb/sm/buffer/buffer.h"
@@ -47,27 +50,25 @@ using namespace tiledb::common;
 namespace tiledb {
 namespace sm {
 
-Status Win32CNG::get_random_bytes(unsigned num_bytes, Buffer* output) {
-  if (output->free_space() < num_bytes)
-    RETURN_NOT_OK(output->realloc(output->alloced_size() + num_bytes));
-
+static Status get_random_bytes(span<uint8_t> buffer) {
   BCRYPT_ALG_HANDLE alg_handle;
   if (!NT_SUCCESS(BCryptOpenAlgorithmProvider(
           &alg_handle, BCRYPT_RNG_ALGORITHM, nullptr, 0)))
-    return Status::EncryptionError(
+    return Status_EncryptionError(
         "Win32CNG error; generating random bytes: error opening algorithm.");
 
-  if (!NT_SUCCESS(BCryptGenRandom(
-          alg_handle, (unsigned char*)output->cur_data(), num_bytes, 0))) {
-    BCryptCloseAlgorithmProvider(alg_handle, 0);
-    return Status::EncryptionError(
-        "Win32CNG error; generating random bytes: error generating bytes.");
+  while (!buffer.empty()) {
+    ULONG num_bytes = ULONG(
+        std::min(buffer.size(), size_t(std::numeric_limits<ULONG>::max())));
+    if (!NT_SUCCESS(BCryptGenRandom(alg_handle, buffer.data(), num_bytes, 0))) {
+      BCryptCloseAlgorithmProvider(alg_handle, 0);
+      return Status_EncryptionError(
+          "Win32CNG error; generating random bytes: error generating bytes.");
+    }
+    buffer = buffer.subspan(num_bytes);
   }
 
   BCryptCloseAlgorithmProvider(alg_handle, 0);
-
-  output->advance_size(num_bytes);
-  output->advance_offset(num_bytes);
 
   return Status::Ok();
 }
@@ -87,11 +88,11 @@ Status Win32CNG::encrypt_aes256gcm(
   // Generate IV if the given IV buffer is null.
   ULONG iv_len;
   unsigned char* iv_buf;
-  Buffer generated_iv;
+  std::array<unsigned char, Crypto::AES256GCM_IV_BYTES> generated_iv;
   if (iv == nullptr || iv->data() == nullptr) {
-    RETURN_NOT_OK(get_random_bytes(Crypto::AES256GCM_IV_BYTES, &generated_iv));
+    RETURN_NOT_OK(get_random_bytes(generated_iv));
     iv_len = (ULONG)generated_iv.size();
-    iv_buf = (unsigned char*)generated_iv.data();
+    iv_buf = generated_iv.data();
   } else {
     iv_len = (ULONG)iv->size();
     iv_buf = (unsigned char*)iv->data();
@@ -103,7 +104,7 @@ Status Win32CNG::encrypt_aes256gcm(
   BCRYPT_ALG_HANDLE alg_handle;
   if (!NT_SUCCESS(BCryptOpenAlgorithmProvider(
           &alg_handle, BCRYPT_AES_ALGORITHM, nullptr, 0))) {
-    return LOG_STATUS(Status::EncryptionError(
+    return LOG_STATUS(Status_EncryptionError(
         "Win32CNG error; error opening algorithm provider."));
   }
   if (!NT_SUCCESS(BCryptSetProperty(
@@ -113,8 +114,8 @@ Status Win32CNG::encrypt_aes256gcm(
           sizeof(BCRYPT_CHAIN_MODE_GCM),
           0))) {
     BCryptCloseAlgorithmProvider(alg_handle, 0);
-    return LOG_STATUS(Status::EncryptionError(
-        "Win32CNG error; error setting chaining mode."));
+    return LOG_STATUS(
+        Status_EncryptionError("Win32CNG error; error setting chaining mode."));
   }
 
   // Initialize authentication info struct.
@@ -156,7 +157,7 @@ Status Win32CNG::encrypt_aes256gcm(
           0))) {
     BCryptCloseAlgorithmProvider(alg_handle, 0);
     return LOG_STATUS(
-        Status::EncryptionError("Win32CNG error; error importing key blob."));
+        Status_EncryptionError("Win32CNG error; error importing key blob."));
   }
 
   // Encrypt the input.
@@ -175,7 +176,7 @@ Status Win32CNG::encrypt_aes256gcm(
     BCryptDestroyKey(key_handle);
     BCryptCloseAlgorithmProvider(alg_handle, 0);
     return LOG_STATUS(
-        Status::EncryptionError("Win32CNG error; error encrypting."));
+        Status_EncryptionError("Win32CNG error; error encrypting."));
   }
 
   output->advance_size(output_len);
@@ -200,7 +201,7 @@ Status Win32CNG::decrypt_aes256gcm(
     if (output->free_space() < required_space)
       RETURN_NOT_OK(output->realloc(output->alloced_size() + required_space));
   } else if (output->size() < required_space) {
-    return LOG_STATUS(Status::EncryptionError(
+    return LOG_STATUS(Status_EncryptionError(
         "Win32CNG error; cannot decrypt: output buffer too small."));
   }
 
@@ -208,7 +209,7 @@ Status Win32CNG::decrypt_aes256gcm(
   BCRYPT_ALG_HANDLE alg_handle;
   if (!NT_SUCCESS(BCryptOpenAlgorithmProvider(
           &alg_handle, BCRYPT_AES_ALGORITHM, nullptr, 0))) {
-    return LOG_STATUS(Status::EncryptionError(
+    return LOG_STATUS(Status_EncryptionError(
         "Win32CNG error; error opening algorithm provider."));
   }
   if (!NT_SUCCESS(BCryptSetProperty(
@@ -218,8 +219,8 @@ Status Win32CNG::decrypt_aes256gcm(
           sizeof(BCRYPT_CHAIN_MODE_GCM),
           0))) {
     BCryptCloseAlgorithmProvider(alg_handle, 0);
-    return LOG_STATUS(Status::EncryptionError(
-        "Win32CNG error; error setting chaining mode."));
+    return LOG_STATUS(
+        Status_EncryptionError("Win32CNG error; error setting chaining mode."));
   }
 
   // Initialize authentication info struct.
@@ -261,7 +262,7 @@ Status Win32CNG::decrypt_aes256gcm(
           0))) {
     BCryptCloseAlgorithmProvider(alg_handle, 0);
     return LOG_STATUS(
-        Status::EncryptionError("Win32CNG error; error importing key blob."));
+        Status_EncryptionError("Win32CNG error; error importing key blob."));
   }
 
   // Decrypt the input.
@@ -280,7 +281,7 @@ Status Win32CNG::decrypt_aes256gcm(
     BCryptDestroyKey(key_handle);
     BCryptCloseAlgorithmProvider(alg_handle, 0);
     return LOG_STATUS(
-        Status::EncryptionError("Win32CNG error; error decrypting."));
+        Status_EncryptionError("Win32CNG error; error decrypting."));
   }
 
   if (output->owns_data())
@@ -294,16 +295,6 @@ Status Win32CNG::decrypt_aes256gcm(
   return Status::Ok();
 }
 
-Status Win32CNG::md5(
-    const void* input, uint64_t input_read_size, Buffer* output) {
-  return hash_bytes(input, input_read_size, output, BCRYPT_MD5_ALGORITHM);
-}
-
-Status Win32CNG::sha256(
-    const void* input, uint64_t input_read_size, Buffer* output) {
-  return hash_bytes(input, input_read_size, output, BCRYPT_SHA256_ALGORITHM);
-}
-
 Status Win32CNG::hash_bytes(
     const void* input,
     uint64_t input_read_size,
@@ -315,7 +306,7 @@ Status Win32CNG::hash_bytes(
   BCRYPT_ALG_HANDLE alg_handle;
   if (!NT_SUCCESS(
           BCryptOpenAlgorithmProvider(&alg_handle, hash_algorithm, NULL, 0))) {
-    return Status::ChecksumError(
+    return Status_ChecksumError(
         "Win32CNG error; could not open of hash algorithm.");
   }
 
@@ -328,13 +319,13 @@ Status Win32CNG::hash_bytes(
           sizeof(DWORD),
           &cbData,
           0))) {
-    return Status::ChecksumError(
+    return Status_ChecksumError(
         "Win32CNG error; could not get size of hash object.");
   }
 
   // allocate the hash object on the heap
   tdb_unique_ptr<Buffer> hash_obj = tdb_unique_ptr<Buffer>(tdb_new(Buffer));
-  hash_obj->realloc(hash_size);
+  throw_if_not_ok(hash_obj->realloc(hash_size));
 
   // create a hash
   BCRYPT_HASH_HANDLE hash = NULL;
@@ -346,20 +337,19 @@ Status Win32CNG::hash_bytes(
           NULL,
           0,
           0))) {
-    return Status::ChecksumError(
+    return Status_ChecksumError(
         "Win32CNG error; could not create hash object.");
   }
 
   // hash some data
   if (!NT_SUCCESS(BCryptHashData(hash, (PBYTE)input, input_read_size, 0))) {
-    return Status::ChecksumError("Win32CNG error; could not hash data.");
+    return Status_ChecksumError("Win32CNG error; could not hash data.");
   }
 
   // close the hash
   if (!NT_SUCCESS(BCryptFinishHash(
           hash, (PUCHAR)output->data(), output->alloced_size(), 0))) {
-    return Status::ChecksumError(
-        "Win32CNG error; could not close hash object.");
+    return Status_ChecksumError("Win32CNG error; could not close hash object.");
   }
 
   return Status::Ok();

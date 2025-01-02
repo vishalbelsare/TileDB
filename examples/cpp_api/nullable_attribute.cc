@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2020-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2020-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -53,14 +53,14 @@ void create_array() {
   ArraySchema schema(ctx, TILEDB_DENSE);
   schema.set_domain(domain).set_order({{TILEDB_ROW_MAJOR, TILEDB_ROW_MAJOR}});
 
-  // Create two attributes "a1" and "a2", the first fixed and the second
-  // variable-sized.
+  // Create three attributes "a1", "a2" and "a3", the first fixed, the second
+  // variable-sized and the last one a variable-sized UTF8 string
   Attribute a1 = Attribute::create<int>(ctx, "a1");
   Attribute a2 = Attribute::create<std::vector<int>>(ctx, "a2");
   auto a3 = Attribute(ctx, "a3", TILEDB_STRING_UTF8);
   a3.set_cell_val_num(TILEDB_VAR_NUM);
 
-  // Set both attributes as nullable
+  // Set all attributes as nullable
   a1.set_nullable(true);
   a2.set_nullable(true);
   a3.set_nullable(true);
@@ -70,7 +70,7 @@ void create_array() {
   schema.add_attribute(a3);
 
   // Create the (empty) array on disk.
-  Array::create(array_name, schema);
+  Array::create(ctx, array_name, schema);
 }
 
 void write_array() {
@@ -139,7 +139,8 @@ void read_array() {
   query.set_layout(TILEDB_ROW_MAJOR);
 
   // Read the full array
-  const std::vector<int> subarray_full = {1, 2, 1, 2};
+  Subarray subarray_full(ctx, array);
+  subarray_full.add_range(0, 1, 2).add_range(1, 1, 2);
   query.set_subarray(subarray_full);
 
   // Set the query buffers specifying the validity for each data

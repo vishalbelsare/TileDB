@@ -37,16 +37,15 @@
 #include <set>
 #include <string>
 
-#include "tiledb/common/status.h"
 #include "tiledb/sm/config/config.h"
+#include "tiledb/sm/storage_manager/storage_manager_declaration.h"
 
 using namespace tiledb::common;
 
 namespace tiledb {
 namespace sm {
 
-class OpenArrayMemoryTracker;
-class StorageManager;
+class URI;
 
 namespace global_state {
 
@@ -67,9 +66,8 @@ class GlobalState {
    * Initializes all TileDB global state in an idempotent and threadsafe way.
    *
    * @param config The TileDB configuration parameters (or nullptr).
-   * @return Status
    */
-  Status init(const Config* config);
+  void init(const Config& config = Config());
 
   /**
    * Register the given StorageManger instance.
@@ -88,22 +86,6 @@ class GlobalState {
    */
   std::set<StorageManager*> storage_managers();
 
-  /**
-   * Find the open array memory tracker amongst all the storage managers.
-   * @param array_uri The array URI.
-   * @param caller The storage manager that iniciated the call.
-   * @return the memory tracker object for the array.
-   */
-  OpenArrayMemoryTracker* array_memory_tracker(
-      const URI& array_uri, StorageManager* caller);
-
-  /**
-   * Getter for cert file
-   * @return detected cert file or empty if no cert file detected. Always empty
-   * string on non-linux platforms
-   */
-  const std::string& cert_file();
-
  private:
   /** The TileDB configuration parameters. */
   Config config_;
@@ -119,9 +101,6 @@ class GlobalState {
 
   /** Mutex protecting list of StorageManagers. */
   std::mutex storage_managers_mtx_;
-
-  /** Detected certificate file, currently only used on linux */
-  std::string cert_file_;
 
   /** Constructor. */
   GlobalState();

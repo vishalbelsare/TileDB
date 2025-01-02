@@ -30,12 +30,13 @@
  * Tests the `Dimension` class.
  */
 
-#include "test/src/helpers-dimension.h"
+#include "test/support/src/helpers-dimension.h"
+#include "test/support/src/mem_helpers.h"
 #include "tiledb/sm/array_schema/dimension.h"
 #include "tiledb/sm/enums/datatype.h"
 #include "tiledb/sm/misc/hilbert.h"
 
-#include <catch.hpp>
+#include <test/support/tdb_catch.h>
 #include <iostream>
 
 using namespace tiledb;
@@ -47,12 +48,13 @@ TEST_CASE(
     "Dimension: Test map_to_uint64, integers",
     "[dimension][map_to_uint64][int]") {
   // Create dimensions
-  Dimension d1("d1", Datatype::INT32);
+  auto memory_tracker = get_test_memory_tracker();
+  Dimension d1("d1", Datatype::INT32, memory_tracker);
   int32_t dom1[] = {0, 100};
-  d1.set_domain(dom1);
-  Dimension d2("d2", Datatype::INT32);
+  CHECK(d1.set_domain(dom1).ok());
+  Dimension d2("d2", Datatype::INT32, memory_tracker);
   int32_t dom2[] = {0, 200};
-  d2.set_domain(dom2);
+  CHECK(d2.set_domain(dom2).ok());
 
   // Create 2D hilbert curve (auxiliary here)
   Hilbert h(2);
@@ -161,12 +163,13 @@ TEST_CASE(
     "Dimension: Test map_to_uint64, int32, negative",
     "[dimension][map_to_uint64][int32][negative]") {
   // Create dimensions
-  Dimension d1("d1", Datatype::INT32);
+  auto memory_tracker = get_test_memory_tracker();
+  Dimension d1("d1", Datatype::INT32, memory_tracker);
   int32_t dom1[] = {-50, 50};
-  d1.set_domain(dom1);
-  Dimension d2("d2", Datatype::INT32);
+  CHECK(d1.set_domain(dom1).ok());
+  Dimension d2("d2", Datatype::INT32, memory_tracker);
   int32_t dom2[] = {-100, 100};
-  d2.set_domain(dom2);
+  CHECK(d2.set_domain(dom2).ok());
 
   // Create 2D hilbert curve (auxiliary here)
   Hilbert h(2);
@@ -273,14 +276,15 @@ TEST_CASE(
 
 TEST_CASE(
     "Dimension: Test map_to_uint64, float32",
-    "[dimension][map_to_uint64][float32") {
+    "[dimension][map_to_uint64][float32]") {
   // Create dimensions
-  Dimension d1("d1", Datatype::FLOAT32);
+  auto memory_tracker = get_test_memory_tracker();
+  Dimension d1("d1", Datatype::FLOAT32, memory_tracker);
   float dom1[] = {0.0f, 1.0f};
-  d1.set_domain(dom1);
-  Dimension d2("d2", Datatype::FLOAT32);
+  CHECK(d1.set_domain(dom1).ok());
+  Dimension d2("d2", Datatype::FLOAT32, memory_tracker);
   float dom2[] = {0.0f, 2.0f};
-  d2.set_domain(dom2);
+  CHECK(d2.set_domain(dom2).ok());
 
   // Create 2D hilbert curve (auxiliary here)
   Hilbert h(2);
@@ -398,8 +402,9 @@ TEST_CASE(
     "Dimension: Test map_to_uint64, string",
     "[dimension][map_to_uint64][string]") {
   // Create dimensions
-  Dimension d1("d1", Datatype::STRING_ASCII);
-  Dimension d2("d2", Datatype::STRING_ASCII);
+  auto memory_tracker = get_test_memory_tracker();
+  Dimension d1("d1", Datatype::STRING_ASCII, memory_tracker);
+  Dimension d2("d2", Datatype::STRING_ASCII, memory_tracker);
 
   // Create 2D hilbert curve (auxiliary here)
   Hilbert h(2);
@@ -517,9 +522,10 @@ TEST_CASE(
     "Dimension: Test map_from_uint64, int32",
     "[dimension][map_from_uint64][int32]") {
   // Create dimensions
-  Dimension d1("d1", Datatype::INT32);
+  auto memory_tracker = get_test_memory_tracker();
+  Dimension d1("d1", Datatype::INT32, memory_tracker);
   int32_t dom1[] = {0, 100};
-  d1.set_domain(dom1);
+  CHECK(d1.set_domain(dom1).ok());
 
   // Set number of buckets
   Hilbert h(2);
@@ -538,9 +544,10 @@ TEST_CASE(
     "Dimension: Test map_from_uint64, int32, negative",
     "[dimension][map_from_uint64][int32][negative]") {
   // Create dimensions
-  Dimension d1("d1", Datatype::INT32);
+  auto memory_tracker = get_test_memory_tracker();
+  Dimension d1("d1", Datatype::INT32, memory_tracker);
   int32_t dom1[] = {-50, 50};
-  d1.set_domain(dom1);
+  CHECK(d1.set_domain(dom1).ok());
 
   // Set number of buckets
   Hilbert h(2);
@@ -559,9 +566,10 @@ TEST_CASE(
     "Dimension: Test map_from_uint64, float32",
     "[dimension][map_from_uint64][float32]") {
   // Create dimensions
-  Dimension d1("d1", Datatype::FLOAT32);
+  auto memory_tracker = get_test_memory_tracker();
+  Dimension d1("d1", Datatype::FLOAT32, memory_tracker);
   float dom1[] = {0.0f, 1.0f};
-  d1.set_domain(dom1);
+  CHECK(d1.set_domain(dom1).ok());
 
   // Set number of buckets
   Hilbert h(2);
@@ -580,7 +588,8 @@ TEST_CASE(
     "Dimension: Test map_from_uint64, string",
     "[dimension][map_from_uint64][string]") {
   // Create dimensions
-  Dimension d1("d1", Datatype::STRING_ASCII);
+  auto memory_tracker = get_test_memory_tracker();
+  Dimension d1("d1", Datatype::STRING_ASCII, memory_tracker);
 
   // Set number of buckets
   Hilbert h(2);
@@ -606,71 +615,12 @@ TEST_CASE(
   CHECK(val_str == std::string("yell", 4));
 }
 
-template <typename T>
-void test_int_max_tile_extent_value() {
-  T min = std::numeric_limits<T>::min() + std::is_signed<T>::value;
-  T max = std::numeric_limits<T>::max() - !std::is_signed<T>::value;
-
-  typedef typename std::make_unsigned<T>::type tile_extent_t;
-  T max_extent = (tile_extent_t)max - (tile_extent_t)min + 1;
-
-  auto tile_idx = Dimension::tile_idx(max, min, max_extent);
-
-  CHECK(Dimension::tile_coord_low(tile_idx, min, max_extent) == min);
-  CHECK(Dimension::tile_coord_high(tile_idx, min, max_extent) == max);
-
-  CHECK(Dimension::round_to_tile(min, min, max_extent) == min);
-  CHECK(Dimension::round_to_tile(max, min, max_extent) == min);
-}
-
-template <typename T>
-void test_int_min_tile_extent_value() {
-  T min = std::numeric_limits<T>::min();
-  T max = std::numeric_limits<T>::max();
-
-  T min_extent = 1;
-
-  auto tile_idx = Dimension::tile_idx(max, min, min_extent);
-
-  CHECK(Dimension::tile_coord_low(0, min, min_extent) == min);
-  CHECK(Dimension::tile_coord_high(tile_idx, min, min_extent) == max);
-
-  CHECK(Dimension::round_to_tile(min, min, min_extent) == min);
-  CHECK(Dimension::round_to_tile(max, min, min_extent) == max);
-}
-
-TEST_CASE(
-    "test max tile extent for integer values",
-    "[dimension][integral][max][tile_extent]") {
-  test_int_max_tile_extent_value<int8_t>();
-  test_int_max_tile_extent_value<int16_t>();
-  test_int_max_tile_extent_value<int32_t>();
-  test_int_max_tile_extent_value<int64_t>();
-  test_int_max_tile_extent_value<uint8_t>();
-  test_int_max_tile_extent_value<uint16_t>();
-  test_int_max_tile_extent_value<uint32_t>();
-  test_int_max_tile_extent_value<uint64_t>();
-}
-
-TEST_CASE(
-    "test min tile extent for integer values",
-    "[dimension][integral][min][tile_extent]") {
-  test_int_min_tile_extent_value<int8_t>();
-  test_int_min_tile_extent_value<int16_t>();
-  test_int_min_tile_extent_value<int32_t>();
-  test_int_min_tile_extent_value<int64_t>();
-  test_int_min_tile_extent_value<uint8_t>();
-  test_int_min_tile_extent_value<uint16_t>();
-  test_int_min_tile_extent_value<uint32_t>();
-  test_int_min_tile_extent_value<uint64_t>();
-}
-
 template <class T>
 double basic_verify_overlap_ratio(
     T range1_low, T range1_high, T range2_low, T range2_high) {
   auto r1 = TypedRange<T>(range1_low, range1_high);
   auto r2 = TypedRange<T>(range2_low, range2_high);
-  Dimension d("foo", RangeTraits<T>::datatype);
+  Dimension d("foo", RangeTraits<T>::datatype, get_test_memory_tracker());
   auto ratio = d.overlap_ratio(r1, r2);
   CHECK(0.0 <= ratio);
   CHECK(ratio <= 1.0);

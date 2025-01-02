@@ -30,8 +30,8 @@
  * Consolidation tests with the C++ API.
  */
 
-#include "catch.hpp"
-#include "helpers.h"
+#include <test/support/tdb_catch.h>
+#include "test/support/src/helpers.h"
 #include "tiledb/sm/cpp_api/tiledb"
 
 using namespace tiledb;
@@ -78,9 +78,11 @@ void read_array(
   Array array(ctx, array_name, TILEDB_READ);
   Query query(ctx, array, TILEDB_READ);
   query.set_layout(TILEDB_ROW_MAJOR);
+  Subarray subarray(ctx, array);
   for (auto& r : ranges) {
-    query.add_range(0, r, r);
+    subarray.add_range(0, r, r);
   }
+  query.set_subarray(subarray);
   std::vector<int> d(100);
   std::vector<int> values(100);
   query.set_data_buffer("d", d);
@@ -107,7 +109,7 @@ TEST_CASE(
 
   Context ctx;
   Config config;
-  config["sm.consolidation.buffer_size"] = "4";
+  config["sm.consolidation.buffer_size"] = "8";
   REQUIRE_NOTHROW(Array::consolidate(ctx, array_name, &config));
   CHECK(tiledb::test::num_fragments(array_name) == 3);
   REQUIRE_NOTHROW(Array::vacuum(ctx, array_name, &config));
@@ -141,7 +143,7 @@ TEST_CASE(
 
   Context ctx;
   Config config;
-  config["sm.consolidation.buffer_size"] = "4";
+  config["sm.consolidation.buffer_size"] = "8";
   REQUIRE_NOTHROW(Array::consolidate(ctx, array_name, &config));
   CHECK(tiledb::test::num_fragments(array_name) == 3);
 

@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -37,22 +37,28 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 
 #include "tiledb/common/blank.h"
-#include "tiledb/common/logger_public.h"
+#include "tiledb/common/common.h"
+#include "tiledb/common/macros.h"
+#include "tiledb/common/memory_tracker.h"
 #include "tiledb/common/status.h"
+#include "tiledb/sm/enums/datatype.h"
+#include "tiledb/sm/misc/constants.h"
 #include "tiledb/sm/misc/types.h"
-#include "tiledb/sm/misc/utils.h"
-#include "tiledb/sm/query/query_buffer.h"
-#include "tiledb/sm/query/result_coords.h"
 #include "tiledb/sm/tile/tile.h"
 
 using namespace tiledb::common;
+using namespace tiledb::type;
 
-namespace tiledb {
-namespace sm {
+namespace tiledb::type {
+class Range;
+}
+
+namespace tiledb::sm {
 
 class Buffer;
 class ConstBuffer;
@@ -61,7 +67,16 @@ class FilterPipeline;
 enum class Compressor : uint8_t;
 enum class Datatype : uint8_t;
 
-/** Manipulates a TileDB dimension. */
+class DimensionDispatch;
+
+/** Manipulates a TileDB dimension.
+ *
+ * Note: as laid out in the Storage Format,
+ * the following Datatypes are not valid for Dimension:
+ * TILEDB_CHAR, TILEDB_BLOB, TILEDB_GEOM_WKB, TILEDB_GEOM_WKT, TILEDB_BOOL,
+ * TILEDB_STRING_UTF8, TILEDB_STRING_UTF16, TILEDB_STRING_UTF32,
+ * TILEDB_STRING_UCS2, TILEDB_STRING_UCS4, TILEDB_ANY
+ */
 class Dimension {
  public:
   /* ********************************* */
@@ -78,28 +93,38 @@ class Dimension {
    *
    * @param name The name of the dimension.
    * @param type The type of the dimension.
+   * @param memory_tracker The memory tracker to use.
    */
-  Dimension(const std::string& name, Datatype type);
+  Dimension(
+      const std::string& name,
+      Datatype type,
+      shared_ptr<MemoryTracker> memory_tracker);
 
   /**
-   * Constructor. It clones the input.
+   * Constructor.
    *
-   * @param dim The dimension to clone.
+   * @param name The name of the dimension.
+   * @param type The type of the dimension.
+   * @param cell_val_num The cell value number of the dimension.
+   * @param domain The range of the dimension range.
+   * @param filter_pipeline The filters of the dimension.
+   * @param tile_extent The tile extent of the dimension.
+   * @param memory_tracker The memory tracker to use.
    */
-  explicit Dimension(const Dimension* dim);
+  Dimension(
+      const std::string& name,
+      Datatype type,
+      uint32_t cell_val_num,
+      const Range& domain,
+      const FilterPipeline& filter_pipeline,
+      const ByteVecValue& tile_extent,
+      shared_ptr<MemoryTracker> memory_tracker);
 
-  /** Copy constructor. */
-  DISABLE_COPY(Dimension);
+  DISABLE_COPY_AND_COPY_ASSIGN(Dimension);
+  DISABLE_MOVE_AND_MOVE_ASSIGN(Dimension);
 
   /** Destructor. */
   ~Dimension() = default;
-
-  /* ********************************* */
-  /*             OPERATORS             */
-  /* ********************************* */
-
-  /** Copy-assignment operator. */
-  DISABLE_COPY_ASSIGN(Dimension);
 
   /* ********************************* */
   /*                API                */
@@ -112,32 +137,29 @@ class Dimension {
   Status set_cell_val_num(unsigned int cell_val_num);
 
   /** Returns the size (in bytes) of a coordinate in this dimension. */
-  uint64_t coord_size() const;
-
-  /**
-   *  Returns a coordinate in string format.
-   *
-   * @param buff The query buffer that contains all coordinates.
-   * @param i The position of the coordinate in the buffer.
-   * @return The coordinate in string format.
-   */
-  std::string coord_to_str(const QueryBuffer& buff, uint64_t i) const;
+  [[nodiscard]] inline size_t coord_size() const {
+    return datatype_size(type_);
+  }
 
   /**
    * Populates the object members from the data in the input binary buffer.
    *
-   * @param buff The buffer to deserialize from.
-   * @param type The type of the dimension.
+   * @param deserializer The deserializer to deserialize from.
    * @param version The array schema version.
-   * @return Status
+   * @param type The type of the dimension.
+   * @param coords_filters Coords filters to replace empty coords pipelines.
+   * @param memory_tracker The memory tracker to use.
+   * @return Dimension
    */
-  Status deserialize(ConstBuffer* buff, uint32_t version, Datatype type);
+  static shared_ptr<Dimension> deserialize(
+      Deserializer& deserializer,
+      uint32_t version,
+      Datatype type,
+      FilterPipeline& coords_filters,
+      shared_ptr<MemoryTracker> memory_tracker);
 
   /** Returns the domain. */
   const Range& domain() const;
-
-  /** Dumps the dimension contents in ASCII form in the selected output. */
-  void dump(FILE* out) const;
 
   /** Returns the filter pipeline of this dimension. */
   const FilterPipeline& filters() const;
@@ -159,7 +181,8 @@ class Dimension {
   static uint64_t tile_idx(
       const T& v, const T& domain_low, const T& tile_extent) {
     typedef typename std::make_unsigned<T>::type unsigned_t;
-    return ((unsigned_t)v - (unsigned_t)domain_low) / (unsigned_t)tile_extent;
+    return static_cast<unsigned_t>(v - domain_low) /
+           static_cast<unsigned_t>(tile_extent);
   }
 
   /**
@@ -293,7 +316,7 @@ class Dimension {
   template <
       class T,
       typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
-  static T tile_extent_mult(const T& v, const T& tile_extent) {
+  static uint64_t tile_extent_mult(const T& v, const T& tile_extent) {
     typedef typename std::make_unsigned<T>::type unsigned_t;
     return (unsigned_t)v * (unsigned_t)tile_extent;
   }
@@ -336,14 +359,6 @@ class Dimension {
    *
    */
   Status check_range(const Range& range) const;
-
-  /**
-   * Adjust a range so that the upper/lower bounds are within the dimension's
-   * domain.
-   * @param range Query range object that might be mutated
-   * @return status if error
-   */
-  Status adjust_range_oob(Range* range) const;
 
   /**
    * Performs correctness checks on the input range. Returns `true`
@@ -426,86 +441,6 @@ class Dimension {
     return true;
   }
 
-  /**
-   * Takes a range from a query and might mutate it so the lower/upper values
-   * are within the domain of the dimension. If mutation occurs a warning is
-   * logged
-   *
-   * @tparam T datatype
-   * @param dim dimension object to get domain from
-   * @param range Query range objects to mutate
-   */
-  template <
-      typename T,
-      typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
-  static void adjust_range_oob(const Dimension* dim, const Range* range) {
-    auto domain = (const T*)dim->domain().data();
-    auto r = (T*)range->data();
-
-    // Check out-of-bounds
-    if (r[0] < domain[0]) {
-      std::stringstream ss;
-      ss << "Range lower bound " << r[0] << " is out of domain bounds ["
-         << domain[0] << ", " << domain[1]
-         << "]. Adjusting range lower bound to be " << domain[0]
-         << " on dimension '" << dim->name() << "'";
-      LOG_WARN(ss.str());
-
-      r[0] = domain[0];
-    }
-
-    if (r[1] > domain[1]) {
-      std::stringstream ss;
-      ss << "Range upper bound " << r[1] << " is out of domain bounds ["
-         << domain[0] << ", " << domain[1]
-         << "]. Adjusting range upper bound to be " << domain[1]
-         << " on dimension '" << dim->name() << "'";
-      LOG_WARN(ss.str());
-
-      r[1] = domain[1];
-    }
-  }
-
-  /**
-   * Takes a range from a query and might mutate it so the lower/upper values
-   * are within the domain of the dimension. If mutation occurs a warning is
-   * logged
-   *
-   * @tparam T datatype
-   * @param dim dimension object to get domain from
-   * @param range Query range objects to mutate
-   */
-  template <
-      typename T,
-      typename std::enable_if<!std::is_integral<T>::value>::type* = nullptr>
-  static void adjust_range_oob(const Dimension* dim, const Range* range) {
-    auto domain = (const T*)dim->domain().data();
-    auto r = (T*)range->data();
-
-    // Check out-of-bounds
-    if (r[0] < domain[0]) {
-      std::stringstream ss;
-      ss << "Range lower bound " << r[0] << " is out of domain bounds ["
-         << domain[0] << ", " << domain[1]
-         << "]. Adjusting range lower bound to be " << domain[0]
-         << " on dimension '" << dim->name() << "'";
-      LOG_WARN(ss.str());
-
-      r[0] = domain[0];
-    }
-
-    if (r[1] > domain[1]) {
-      std::stringstream ss;
-      ss << "Range upper bound " << r[1] << " is out of domain bounds ["
-         << domain[0] << ", " << domain[1]
-         << "]. Adjusting range upper bound to be " << domain[1]
-         << " on dimension '" << dim->name() << "'";
-      LOG_WARN(ss.str());
-
-      r[1] = domain[1];
-    }
-  }
-
   /** Returns true if the input range coincides with tile boundaries. */
   bool coincides_with_tiles(const Range& r) const;
 
@@ -517,42 +452,29 @@ class Dimension {
    * Computes the minimum bounding range of the values stored in
    * `tile`. Applicable only to fixed-size dimensions.
    */
-  Status compute_mbr(const Tile& tile, Range* mbr) const;
+  Range compute_mbr(const WriterTile& tile) const;
 
   /**
    * Computed the minimum bounding range of the values stored in
    * `tile`.
    */
   template <class T>
-  static Status compute_mbr(const Tile& tile, Range* mbr);
+  static Range compute_mbr(const WriterTile& tile);
 
   /**
    * Computes the minimum bounding range of the values stored in
    * `tile_val`. Applicable only to var-sized dimensions.
    */
-  Status compute_mbr_var(
-      const Tile& tile_off, const Tile& tile_val, Range* mbr) const;
+  Range compute_mbr_var(
+      const WriterTile& tile_off, const WriterTile& tile_val) const;
 
   /**
    * Computes the minimum bounding range of the values stored in
    * `tile_val`. Applicable only to var-sized dimensions.
    */
   template <class T>
-  static Status compute_mbr_var(
-      const Tile& tile_off, const Tile& tile_val, Range* mbr);
-
-  /**
-   * Crops the input 1D range such that it does not exceed the
-   * dimension domain.
-   */
-  void crop_range(Range* range) const;
-
-  /**
-   * Crops the input 1D range such that it does not exceed the
-   * dimension domain.
-   */
-  template <class T>
-  static void crop_range(const Dimension* dim, Range* range);
+  static Range compute_mbr_var(
+      const WriterTile& tile_off, const WriterTile& tile_val);
 
   /**
    * Returns the domain range (high - low + 1) of the input
@@ -647,6 +569,32 @@ class Dimension {
   template <class T>
   static double overlap_ratio(const Range& r1, const Range& r2);
 
+  /** Compute relevant ranges for a set of ranges. */
+  void relevant_ranges(
+      const NDRange& ranges,
+      const Range& mbr,
+      tdb::pmr::vector<uint64_t>& relevant_ranges) const;
+
+  /** Compute relevant ranges for a set of ranges. */
+  template <class T>
+  static void relevant_ranges(
+      const NDRange& ranges,
+      const Range& mbr,
+      tdb::pmr::vector<uint64_t>& relevant_ranges);
+
+  /** Compute covered on a set of relevant ranges. */
+  std::vector<bool> covered_vec(
+      const NDRange& ranges,
+      const Range& mbr,
+      const tdb::pmr::vector<uint64_t>& relevant_ranges) const;
+
+  /** Compute covered on a set of relevant ranges. */
+  template <class T>
+  static std::vector<bool> covered_vec(
+      const NDRange& ranges,
+      const Range& mbr,
+      const tdb::pmr::vector<uint64_t>& relevant_ranges);
+
   /** Splits `r` at point `v`, producing 1D ranges `r1` and `r2`. */
   void split_range(
       const Range& r, const ByteVecValue& v, Range* r1, Range* r2) const;
@@ -679,32 +627,6 @@ class Dimension {
   static uint64_t tile_num(const Dimension* dim, const Range& range);
 
   /**
-   * Maps the c-th cell in the input query buffer to a uint64 value,
-   * based on discretizing the domain from 0 to `max_bucket_val`.
-   * This value is used to compute a Hilbert value.
-   */
-  uint64_t map_to_uint64(
-      const QueryBuffer* buff,
-      uint64_t c,
-      uint64_t coords_num,
-      int bits,
-      uint64_t max_bucket_val) const;
-
-  /**
-   * Maps the c-th cell in the input query buffer to a uint64 value,
-   * based on discretizing the domain from 0 to `max_bucket_val`.
-   * This value is used to compute a Hilbert value.
-   */
-  template <class T>
-  static uint64_t map_to_uint64(
-      const Dimension* dim,
-      const QueryBuffer* buff,
-      uint64_t c,
-      uint64_t coords_num,
-      int bits,
-      uint64_t max_bucket_val);
-
-  /**
    * Maps the input coordinate to a uint64 value,
    * based on discretizing the domain from 0 to `max_bucket_val`.
    * This value is used to compute a Hilbert value.
@@ -725,30 +647,6 @@ class Dimension {
       const Dimension* dim,
       const void* coord,
       uint64_t coord_size,
-      int bits,
-      uint64_t max_bucket_val);
-
-  /**
-   * Maps the input result coordinate to a uint64 value,
-   * based on discretizing the domain from 0 to `max_bucket_val`.
-   * This value is used to compute a Hilbert value.
-   */
-  uint64_t map_to_uint64(
-      const ResultCoords& coord,
-      uint32_t dim_idx,
-      int bits,
-      uint64_t max_bucket_val) const;
-
-  /**
-   * Maps the input result coordinate to a uint64 value,
-   * based on discretizing the domain from 0 to `max_bucket_val`.
-   * This value is used to compute a Hilbert value.
-   */
-  template <class T>
-  static uint64_t map_to_uint64_3(
-      const Dimension* dim,
-      const ResultCoords& coord,
-      uint32_t dim_idx,
       int bits,
       uint64_t max_bucket_val);
 
@@ -780,11 +678,11 @@ class Dimension {
   /**
    * Serializes the object members into a binary buffer.
    *
-   * @param buff The buffer to serialize the data into.
+   * @param serializer The object the dimension is serialized into.
    * @param version The array schema version
    * @return Status
    */
-  Status serialize(Buffer* buff, uint32_t version);
+  void serialize(Serializer& serializer, uint32_t version) const;
 
   /** Sets the domain. */
   Status set_domain(const void* domain);
@@ -796,7 +694,7 @@ class Dimension {
   Status set_domain_unsafe(const void* domain);
 
   /** Sets the filter pipeline for this dimension. */
-  Status set_filter_pipeline(const FilterPipeline* pipeline);
+  void set_filter_pipeline(const FilterPipeline& pipeline);
 
   /** Sets the tile extent. */
   Status set_tile_extent(const void* tile_extent);
@@ -824,18 +722,84 @@ class Dimension {
   Status set_null_tile_extent_to_range();
 
   /** Returns the tile extent. */
-  const ByteVecValue& tile_extent() const;
+  inline const ByteVecValue& tile_extent() const {
+    return tile_extent_;
+  }
 
   /** Returns the dimension type. */
-  Datatype type() const;
+  inline Datatype type() const {
+    return type_;
+  }
 
   /** Returns true if the dimension is var-sized. */
-  bool var_size() const;
+  inline bool var_size() const {
+    return cell_val_num_ == constants::var_num;
+  }
+
+  class DimensionDispatch {
+   public:
+    DimensionDispatch(const Dimension& base)
+        : base(base) {
+    }
+
+    virtual ~DimensionDispatch() {
+    }
+
+    virtual void ceil_to_tile(
+        const Range& r, uint64_t tile_num, ByteVecValue* v) const = 0;
+    virtual bool check_range(const Range& range, std::string* error) const = 0;
+    virtual bool coincides_with_tiles(const Range& r) const = 0;
+    virtual Range compute_mbr(const WriterTile&) const = 0;
+    virtual Range compute_mbr_var(
+        const WriterTile&, const WriterTile&) const = 0;
+    virtual uint64_t domain_range(const Range& range) const = 0;
+    virtual void expand_range(const Range& r1, Range* r2) const = 0;
+    virtual void expand_range_v(const void* v, Range* r) const = 0;
+    virtual void expand_to_tile(Range* range) const = 0;
+    virtual bool oob(const void* coord, std::string* err_msg) const = 0;
+    virtual bool covered(const Range& r1, const Range& r2) const = 0;
+    virtual bool overlap(const Range& r1, const Range& r2) const = 0;
+    virtual double overlap_ratio(const Range& r1, const Range& r2) const = 0;
+    virtual void relevant_ranges(
+        const NDRange& ranges,
+        const Range& mbr,
+        tdb::pmr::vector<uint64_t>& relevant_ranges) const = 0;
+    virtual std::vector<bool> covered_vec(
+        const NDRange& ranges,
+        const Range& mbr,
+        const tdb::pmr::vector<uint64_t>& relevant_ranges) const = 0;
+    virtual void split_range(
+        const Range& r, const ByteVecValue& v, Range* r1, Range* r2) const = 0;
+    virtual void splitting_value(
+        const Range& r, ByteVecValue* v, bool* unsplittable) const = 0;
+    virtual uint64_t tile_num(const Range& range) const = 0;
+    virtual uint64_t map_to_uint64(
+        const void* coord,
+        uint64_t coord_size,
+        int bits,
+        uint64_t max_bucket_val) const = 0;
+    virtual ByteVecValue map_from_uint64(
+        uint64_t value, int bits, uint64_t max_bucket_val) const = 0;
+    virtual bool smaller_than(
+        const ByteVecValue& value, const Range& range) const = 0;
+
+   protected:
+    const Dimension& base;
+  };
+  friend class DimensionDispatch;
 
  private:
   /* ********************************* */
   /*         PRIVATE ATTRIBUTES        */
   /* ********************************* */
+
+  /** The memory tracker for the dimension. */
+  shared_ptr<MemoryTracker> memory_tracker_;
+
+  /**
+   * Handles dynamic dispatch for functions which depend on Dimension type
+   */
+  tdb_unique_ptr<DimensionDispatch> dispatch_;
 
   /** The number of values per coordinate. */
   unsigned cell_val_num_;
@@ -854,158 +818,6 @@ class Dimension {
 
   /** The dimension type. */
   Datatype type_;
-
-  /**
-   * Stores the appropriate templated ceil_to_tile() function based on the
-   * dimension datatype.
-   */
-  std::function<void(const Dimension*, const Range&, uint64_t, ByteVecValue*)>
-      ceil_to_tile_func_;
-
-  /**
-   * Stores the appropriate templated check_range() function based on the
-   * dimension datatype.
-   */
-  std::function<bool(const Dimension*, const Range&, std::string*)>
-      check_range_func_;
-
-  /**
-   * Stores the appropriate templated check_range() function based on the
-   * dimension datatype.
-   */
-  std::function<void(const Dimension*, const Range*)> adjust_range_oob_func_;
-
-  /**
-   * Stores the appropriate templated coincides_with_tiles() function based on
-   * the dimension datatype.
-   */
-  std::function<bool(const Dimension*, const Range&)>
-      coincides_with_tiles_func_;
-
-  /**
-   * Stores the appropriate templated compute_mbr() function based on the
-   * dimension datatype.
-   */
-  std::function<Status(const Tile&, Range*)> compute_mbr_func_;
-
-  /**
-   * Stores the appropriate templated compute_mbr_var() function based on the
-   * dimension datatype.
-   */
-  std::function<Status(const Tile&, const Tile&, Range*)> compute_mbr_var_func_;
-
-  /**
-   * Stores the appropriate templated crop_range() function based on the
-   * dimension datatype.
-   */
-  std::function<void(const Dimension* dim, Range*)> crop_range_func_;
-
-  /**
-   * Stores the appropriate templated crop_range() function based on the
-   * dimension datatype.
-   */
-  std::function<uint64_t(const Range&)> domain_range_func_;
-
-  /**
-   * Stores the appropriate templated expand_range() function based on the
-   * dimension datatype.
-   */
-  std::function<void(const void*, Range*)> expand_range_v_func_;
-
-  /**
-   * Stores the appropriate templated expand_range() function based on the
-   * dimension datatype.
-   */
-  std::function<void(const Range&, Range*)> expand_range_func_;
-
-  /**
-   * Stores the appropriate templated expand_to_tile() function based on the
-   * dimension datatype.
-   */
-  std::function<void(const Dimension* dim, Range*)> expand_to_tile_func_;
-
-  /**
-   * Stores the appropriate templated oob() function based on the
-   * dimension datatype.
-   */
-  std::function<bool(const Dimension* dim, const void*, std::string*)>
-      oob_func_;
-
-  /**
-   * Stores the appropriate templated covered() function based on the
-   * dimension datatype.
-   */
-  std::function<bool(const Range&, const Range&)> covered_func_;
-
-  /**
-   * Stores the appropriate templated overlap() function based on the
-   * dimension datatype.
-   */
-  std::function<bool(const Range&, const Range&)> overlap_func_;
-
-  /**
-   * Stores the appropriate templated overlap_ratio() function based on the
-   * dimension datatype.
-   */
-  std::function<double(const Range&, const Range&)> overlap_ratio_func_;
-
-  /**
-   * Stores the appropriate templated split_range() function based on the
-   * dimension datatype.
-   */
-  std::function<void(const Range&, const ByteVecValue&, Range*, Range*)>
-      split_range_func_;
-
-  /**
-   * Stores the appropriate templated splitting_value() function based on the
-   * dimension datatype.
-   */
-  std::function<void(const Range&, ByteVecValue*, bool* unsplittable)>
-      splitting_value_func_;
-
-  /**
-   * Stores the appropriate templated tile_num() function based on the
-   * dimension datatype.
-   */
-  std::function<uint64_t(const Dimension* dim, const Range&)> tile_num_func_;
-
-  /**
-   * Stores the appropriate templated map_to_uint64() function based on
-   * the dimension datatype.
-   */
-  std::function<uint64_t(
-      const Dimension*, const QueryBuffer*, uint64_t, uint64_t, int, uint64_t)>
-      map_to_uint64_func_;
-
-  /**
-   * Stores the appropriate templated map_to_uint64_2() function based on
-   * the dimension datatype.
-   */
-  std::function<uint64_t(
-      const Dimension*, const void*, uint64_t, int, uint64_t)>
-      map_to_uint64_2_func_;
-
-  /**
-   * Stores the appropriate templated map_to_uint64_3() function based on
-   * the dimension datatype.
-   */
-  std::function<uint64_t(
-      const Dimension*, const ResultCoords&, uint32_t, int, uint64_t)>
-      map_to_uint64_3_func_;
-
-  /**
-   * Stores the appropriate templated map_from_uint64() function based on
-   * the dimension datatype.
-   */
-  std::function<ByteVecValue(const Dimension*, uint64_t, int, uint64_t)>
-      map_from_uint64_func_;
-
-  /**
-   * Stores the appropriate templated smaller_than() function based on
-   * the dimension datatype.
-   */
-  std::function<bool(const Dimension*, const ByteVecValue&, const Range&)>
-      smaller_than_func_;
 
   /* ********************************* */
   /*          PRIVATE METHODS          */
@@ -1027,7 +839,7 @@ class Dimension {
 
     // Upper bound should not be smaller than lower
     if (domain[1] < domain[0])
-      return LOG_STATUS(Status::DimensionError(
+      return LOG_STATUS(Status_DimensionError(
           "Domain check failed; Upper domain bound should "
           "not be smaller than the lower one"));
 
@@ -1035,7 +847,7 @@ class Dimension {
     // for integer domains
     if (domain[0] == std::numeric_limits<T>::min() &&
         domain[1] == std::numeric_limits<T>::max())
-      return LOG_STATUS(Status::DimensionError(
+      return LOG_STATUS(Status_DimensionError(
           "Domain check failed; Domain range (upper + lower + 1) is larger "
           "than the maximum unsigned number"));
 
@@ -1056,14 +868,14 @@ class Dimension {
     // Check for NAN and INF
     if (std::isinf(domain[0]) || std::isinf(domain[1]))
       return LOG_STATUS(
-          Status::DimensionError("Domain check failed; domain contains NaN"));
+          Status_DimensionError("Domain check failed; domain contains NaN"));
     if (std::isnan(domain[0]) || std::isnan(domain[1]))
       return LOG_STATUS(
-          Status::DimensionError("Domain check failed; domain contains NaN"));
+          Status_DimensionError("Domain check failed; domain contains NaN"));
 
     // Upper bound should not be smaller than lower
     if (domain[1] < domain[0])
-      return LOG_STATUS(Status::DimensionError(
+      return LOG_STATUS(Status_DimensionError(
           "Domain check failed; Upper domain bound should "
           "not be smaller than the lower one"));
 
@@ -1092,87 +904,19 @@ class Dimension {
   Status check_tile_extent_upper_floor_internal(
       const T_EXTENT* domain, T_EXTENT tile_extent) const;
 
-  /** Returns the domain in string format. */
-  std::string domain_str() const;
+  /** Throws error if the input type is not a supported Dimension Datatype. */
+  void ensure_datatype_is_supported(Datatype type) const;
 
-  /** Returns the tile extent in string format. */
-  std::string tile_extent_str() const;
-
-  /** Sets the templated ceil_to_tile() function. */
-  void set_ceil_to_tile_func();
-
-  /** Sets the templated check_range() function. */
-  void set_check_range_func();
-
-  /** Set the templated adjust_range_oob_func() function. */
-  void set_adjust_range_oob_func();
-
-  /** Sets the templated coincides_with_tiles() function. */
-  void set_coincides_with_tiles_func();
-
-  /** Sets the templated compute_mbr() function. */
-  void set_compute_mbr_func();
-
-  /** Sets the templated crop_range() function. */
-  void set_crop_range_func();
-
-  /** Sets the templated domain_range() function. */
-  void set_domain_range_func();
-
-  /** Sets the templated expand_range() function. */
-  void set_expand_range_func();
-
-  /** Sets the templated expand_range_v() function. */
-  void set_expand_range_v_func();
-
-  /** Sets the templated expand_to_tile() function. */
-  void set_expand_to_tile_func();
-
-  /** Sets the templated oob() function. */
-  void set_oob_func();
-
-  /** Sets the templated covered() function. */
-  void set_covered_func();
-
-  /** Sets the templated overlap() function. */
-  void set_overlap_func();
-
-  /** Sets the templated overlap_ratio() function. */
-  void set_overlap_ratio_func();
-
-  /** Sets the templated split_range() function. */
-  void set_split_range_func();
-
-  /** Sets the templated splitting_value() function. */
-  void set_splitting_value_func();
-
-  /** Sets the templated tile_num() function. */
-  void set_tile_num_func();
-
-  /** Sets the templated map_to_uint64() function. */
-  void set_map_to_uint64_func();
-
-  /** Sets the templated map_to_uint64_2() function. */
-  void set_map_to_uint64_2_func();
-
-  /** Sets the templated map_to_uint64_3() function. */
-  void set_map_to_uint64_3_func();
-
-  /** Sets the templated map_from_uint64() function. */
-  void set_map_from_uint64_func();
-
-  /** Sets the templated smaller_than() function. */
-  void set_smaller_than_func();
+  /**
+   * Sets the dimension dynamic dispatch implementation.
+   * Called in the constructor.
+   */
+  void set_dimension_dispatch();
 };
 
-}  // namespace sm
-}  // namespace tiledb
-
-namespace tiledb::common {
-template <>
-struct blank<tiledb::sm::Dimension> : public tiledb::sm::Dimension {
-  blank();
-};
-}  // namespace tiledb::common
+}  // namespace tiledb::sm
 
 #endif  // TILEDB_DIMENSION_H
+
+/** Converts the filter into a string representation. */
+std::ostream& operator<<(std::ostream& os, const tiledb::sm::Dimension& dim);

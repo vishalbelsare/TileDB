@@ -28,6 +28,8 @@
  * @section DESCRIPTION
  *
  * This file declares the TileDB C API for serialization.
+ * APIs defined in this header are currently unstable and subject to breaking
+ * changes between minor releases.
  */
 
 #ifndef TILEDB_SERIALIZATION_H
@@ -57,7 +59,8 @@ typedef enum {
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
  */
 TILEDB_EXPORT int32_t tiledb_serialization_type_to_str(
-    tiledb_serialization_type_t serialization_type, const char** str);
+    tiledb_serialization_type_t serialization_type,
+    const char** str) TILEDB_NOEXCEPT;
 
 /**
  * Parses a serialization type from the given string.
@@ -67,11 +70,55 @@ TILEDB_EXPORT int32_t tiledb_serialization_type_to_str(
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
  */
 TILEDB_EXPORT int32_t tiledb_serialization_type_from_str(
-    const char* str, tiledb_serialization_type_t* serialization_type);
+    const char* str,
+    tiledb_serialization_type_t* serialization_type) TILEDB_NOEXCEPT;
 
 /* ****************************** */
 /*          Serialization         */
 /* ****************************** */
+
+/**
+ * Serializes the given array.
+ *
+ * @note The caller must free the returned `tiledb_buffer_t`.
+ *
+ * @param ctx The TileDB context.
+ * @param array The array to serialize.
+ * @param serialization_type Type of serialization to use
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param buffer Will be set to a newly allocated buffer containing the
+ *      serialized max buffer sizes.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_serialize_array(
+    tiledb_ctx_t* ctx,
+    const tiledb_array_t* array,
+    tiledb_serialization_type_t serialize_type,
+    int32_t client_side,
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
+
+/**
+ * Deserializes a new array from the given buffer.
+ *
+ * @param ctx The TileDB context.
+ * @param buffer Buffer to deserialize from
+ * @param serialization_type Type of serialization to use
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param array_uri uri of the array to deserialize.
+ * @param array Will be set to a newly allocated array.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_deserialize_array(
+    tiledb_ctx_t* ctx,
+    const tiledb_buffer_t* buffer,
+    tiledb_serialization_type_t serialize_type,
+    int32_t client_side,
+    const char* array_uri,
+    tiledb_array_t** array) TILEDB_NOEXCEPT;
 
 /**
  * Serializes the given array schema.
@@ -81,8 +128,9 @@ TILEDB_EXPORT int32_t tiledb_serialization_type_from_str(
  * @param ctx The TileDB context.
  * @param array_schema The array schema to serialize.
  * @param serialization_type Type of serialization to use
- * @param client_side If set to 1, serialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @param buffer Will be set to a newly allocated buffer containing the
  *      serialized max buffer sizes.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
@@ -92,7 +140,7 @@ TILEDB_EXPORT int32_t tiledb_serialize_array_schema(
     const tiledb_array_schema_t* array_schema,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_buffer_t** buffer);
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
 
 /**
  * Deserializes a new array schema from the given buffer.
@@ -100,8 +148,9 @@ TILEDB_EXPORT int32_t tiledb_serialize_array_schema(
  * @param ctx The TileDB context.
  * @param buffer Buffer to deserialize from
  * @param serialization_type Type of serialization to use
- * @param client_side If set to 1, deserialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @param array_schema Will be set to a newly allocated array schema.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
  */
@@ -110,7 +159,51 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_schema(
     const tiledb_buffer_t* buffer,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_array_schema_t** array_schema);
+    tiledb_array_schema_t** array_schema) TILEDB_NOEXCEPT;
+
+/**
+ * Serializes the given array open information into the given buffer.
+ *
+ * @note The caller must free the returned `tiledb_buffer_t`.
+ *
+ * @param ctx The TileDB context.
+ * @param array The array to get the information to serialize from.
+ * @param serialization_type Type of serialization to use.
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param tiledb_buffer_t Will be set to a newly allocated buffer containing
+ *    the serialized array open information.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_serialize_array_open(
+    tiledb_ctx_t* ctx,
+    const tiledb_array_t* array,
+    tiledb_serialization_type_t serialize_type,
+    int32_t client_side,
+    tiledb_buffer_t** buffer_list) TILEDB_NOEXCEPT;
+
+/**
+ * Deserializes into an existing array from the given buffer.
+ *
+ * @note The deserialization is zero-copy, so the source buffer must exceed
+ * the lifetime of the array being deserialized to.
+ *
+ * @param ctx The TileDB context.
+ * @param buffer Buffer to deserialize from.
+ * @param serialization_type Type of deserialization to use.
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param array The array object to deserialize into (must be pre-allocated).
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_deserialize_array_open(
+    tiledb_ctx_t* ctx,
+    const tiledb_buffer_t* buffer,
+    tiledb_serialization_type_t serialize_type,
+    int32_t client_side,
+    tiledb_array_t** array) TILEDB_NOEXCEPT;
 
 /**
  * Serializes the given array schema evolution.
@@ -120,8 +213,9 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_schema(
  * @param ctx The TileDB context.
  * @param array_schema_evolution The array schema evolution to serialize.
  * @param serialization_type Type of serialization to use
- * @param client_side If set to 1, serialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @param buffer Will be set to a newly allocated buffer containing the
  *      serialized max buffer sizes.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
@@ -131,7 +225,7 @@ TILEDB_EXPORT int32_t tiledb_serialize_array_schema_evolution(
     const tiledb_array_schema_evolution_t* array_schema_evolution,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_buffer_t** buffer);
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
 
 /**
  * Deserializes a new array schema evolution object from the given buffer.
@@ -139,8 +233,9 @@ TILEDB_EXPORT int32_t tiledb_serialize_array_schema_evolution(
  * @param ctx The TileDB context.
  * @param buffer Buffer to deserialize from
  * @param serialization_type Type of serialization to use
- * @param client_side If set to 1, deserialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @param array_schema_evolution Will be set to a newly allocated array schema
  * evolution.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
@@ -150,7 +245,7 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_schema_evolution(
     const tiledb_buffer_t* buffer,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_array_schema_evolution_t** array_schema_evolution);
+    tiledb_array_schema_evolution_t** array_schema_evolution) TILEDB_NOEXCEPT;
 
 /**
  * Serializes the given query.
@@ -164,8 +259,9 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_schema_evolution(
  * @param ctx The TileDB context.
  * @param query The query.
  * @param serialization_type Type of serialization to use
- * @param client_side If set to 1, deserialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @param buffer_list Will be set to a newly allocated buffer list containing
  *    the serialized query.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
@@ -175,7 +271,7 @@ TILEDB_EXPORT int32_t tiledb_serialize_query(
     const tiledb_query_t* query,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_buffer_list_t** buffer_list);
+    tiledb_buffer_list_t** buffer_list) TILEDB_NOEXCEPT;
 
 /**
  * Deserializes into an existing query from the given buffer.
@@ -186,8 +282,9 @@ TILEDB_EXPORT int32_t tiledb_serialize_query(
  * @param ctx The TileDB context.
  * @param buffer Buffer to deserialize from
  * @param serialization_type Type of deserialization to use
- * @param client_side If set to 1, deserialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @param query The query object to deserialize into (must be pre-allocated).
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
  */
@@ -196,7 +293,37 @@ TILEDB_EXPORT int32_t tiledb_deserialize_query(
     const tiledb_buffer_t* buffer,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_query_t* query);
+    tiledb_query_t* query) TILEDB_NOEXCEPT;
+
+/**
+ * Deserializes into a new query object from the given buffer, while
+ * deserializing at the same time the (open) array object stored in the query
+ * object as a member. The caller has the responsibility to free the returned
+ * query and array objects.
+ *
+ * @note The deserialization is zero-copy, so the source buffer must exceed
+ * the lifetime of the query being deserialized to.
+ *
+ * @param ctx The TileDB context.
+ * @param buffer Buffer to deserialize from.
+ * @param serialization_type Type of deserialization to use.
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param array_uri uri of the array the query is submitted to.
+ * @param query The query object to allocate and deserialize into.
+ * @param array The array object to allocate and deserialize into. It can also
+ * be referenced as query->array().
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_deserialize_query_and_array(
+    tiledb_ctx_t* ctx,
+    const tiledb_buffer_t* buffer,
+    tiledb_serialization_type_t serialize_type,
+    int32_t client_side,
+    const char* array_uri,
+    tiledb_query_t** query,
+    tiledb_array_t** array) TILEDB_NOEXCEPT;
 
 /**
  * Serializes the given non-empty domain information into the given buffer.
@@ -208,8 +335,9 @@ TILEDB_EXPORT int32_t tiledb_deserialize_query(
  * @param nonempty_domain The domain to serialize
  * @param is_empty 1 if the domain is empty
  * @param serialization_type Type of serialization to use
- * @param client_side If set to 1, serialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @param buffer Will be set to a newly allocated buffer containing the
  *      serialized max buffer sizes.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
@@ -221,7 +349,7 @@ TILEDB_EXPORT int32_t tiledb_serialize_array_nonempty_domain(
     int32_t is_empty,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_buffer_t** buffer);
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
 
 /**
  * Deserializes non-empty domain information from the given buffer.
@@ -230,8 +358,9 @@ TILEDB_EXPORT int32_t tiledb_serialize_array_nonempty_domain(
  * @param array Array to which the domain belongs to
  * @param buffer Buffer to deserialize from
  * @param serialization_type Type of deserialization to use
- * @param client_side If set to 1, deserialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @param nonempty_domain The buffer to deserialize into
  * @param is_empty Will be set to 1 if the domain is empty
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
@@ -243,7 +372,7 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_nonempty_domain(
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
     void* nonempty_domain,
-    int32_t* is_empty);
+    int32_t* is_empty) TILEDB_NOEXCEPT;
 
 /**
  * Serializes the given non-empty domain information into the given buffer.
@@ -253,8 +382,9 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_nonempty_domain(
  * @param ctx The TileDB context.
  * @param Array array to which the domain belongs to
  * @param serialization_type Type of serialization to use
- * @param client_side If set to 1, serialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @param buffer Will be set to a newly allocated buffer containing the
  *      serialized max buffer sizes.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
@@ -264,7 +394,7 @@ TILEDB_EXPORT int32_t tiledb_serialize_array_non_empty_domain_all_dimensions(
     const tiledb_array_t* array,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_buffer_t** buffer);
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
 
 /**
  * Deserializes non-empty domain information from the given buffer.
@@ -273,8 +403,9 @@ TILEDB_EXPORT int32_t tiledb_serialize_array_non_empty_domain_all_dimensions(
  * @param array Array to which the domain belongs to
  * @param buffer Buffer to deserialize from
  * @param serialization_type Type of deserialization to use
- * @param client_side If set to 1, deserialize from "client-side" perspective.
- *    Else, "server-side."
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
  */
 TILEDB_EXPORT int32_t tiledb_deserialize_array_non_empty_domain_all_dimensions(
@@ -282,12 +413,12 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_non_empty_domain_all_dimensions(
     tiledb_array_t* array,
     const tiledb_buffer_t* buffer,
     tiledb_serialization_type_t serialize_type,
-    int32_t client_side);
+    int32_t client_side) TILEDB_NOEXCEPT;
 
 /**
  * Serializes the array max buffer sizes information into the given buffer.
  *
- * @note The caller must free the returned `tiledb_buffer_t`.
+ * This API is deprecated and using it will always return an error.
  *
  * @param ctx The TileDB context.
  * @param array Array to which the subarray belongs to
@@ -295,14 +426,46 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_non_empty_domain_all_dimensions(
  * @param serialization_type Type of serialization to use
  * @param buffer Will be set to a newly allocated buffer containing the
  *      serialized max buffer sizes.
- * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ * @return `TILEDB_ERR`
  */
-TILEDB_EXPORT int32_t tiledb_serialize_array_max_buffer_sizes(
+TILEDB_DEPRECATED_EXPORT int32_t tiledb_serialize_array_max_buffer_sizes(
     tiledb_ctx_t* ctx,
     const tiledb_array_t* array,
     const void* subarray,
     tiledb_serialization_type_t serialize_type,
-    tiledb_buffer_t** buffer);
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
+
+/**
+ * Process a delete fragments request.
+ *
+ * @param ctx The TileDB context.
+ * @param array The TileDB Array.
+ * @param serialization_type Type of serialization to use
+ * @param request Buffer containing serialized fragment timestamps.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT
+capi_return_t tiledb_handle_array_delete_fragments_timestamps_request(
+    tiledb_ctx_t* ctx,
+    tiledb_array_t* array,
+    tiledb_serialization_type_t serialization_type,
+    const tiledb_buffer_t* request) TILEDB_NOEXCEPT;
+
+/**
+ * Process a delete fragments list request.
+ *
+ * @param ctx The TileDB context.
+ * @param array The TileDB Array.
+ * @param serialization_type Type of serialization to use
+ * @param buffer Buffer containing serialized fragments list.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT
+capi_return_t tiledb_handle_array_delete_fragments_list_request(
+    tiledb_ctx_t* ctx,
+    tiledb_array_t* array,
+    tiledb_serialization_type_t serialization_type,
+    const tiledb_buffer_t* request) TILEDB_NOEXCEPT;
 
 /**
  * Serializes the array metadata into the given buffer.
@@ -320,7 +483,7 @@ TILEDB_EXPORT int32_t tiledb_serialize_array_metadata(
     tiledb_ctx_t* ctx,
     const tiledb_array_t* array,
     tiledb_serialization_type_t serialization_type,
-    tiledb_buffer_t** buffer);
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
 
 /**
  * Sets the array metadata on the given array instance by deserializing the
@@ -336,7 +499,7 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_metadata(
     tiledb_ctx_t* ctx,
     tiledb_array_t* array,
     tiledb_serialization_type_t serialization_type,
-    const tiledb_buffer_t* buffer);
+    const tiledb_buffer_t* buffer) TILEDB_NOEXCEPT;
 
 /**
  * Serializes the given query's estimated result sizes map.
@@ -346,7 +509,10 @@ TILEDB_EXPORT int32_t tiledb_deserialize_array_metadata(
  * @param ctx The TileDB context.
  * @param query The query to get the estimated result sizes of.
  * @param serialization_type Type of serialization to use
- * @param client_side currently unused
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * Currently unused.
  * @param buffer Will be set to a newly allocated buffer containing
  *    the serialized query estimated result sizes.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
@@ -356,7 +522,7 @@ TILEDB_EXPORT int32_t tiledb_serialize_query_est_result_sizes(
     const tiledb_query_t* query,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_buffer_t** buffer);
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
 
 /**
  * Deserializes into an existing query from the given buffer.
@@ -365,7 +531,10 @@ TILEDB_EXPORT int32_t tiledb_serialize_query_est_result_sizes(
  * @param ctx The TileDB context.
  * @param query The query object to deserialize into (must be pre-allocated).
  * @param serialization_type Type of deserialization to use
- * @param client_side currently unused
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * Currently unused.
  * @param buffer Buffer to deserialize from
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
  */
@@ -374,7 +543,7 @@ TILEDB_EXPORT int32_t tiledb_deserialize_query_est_result_sizes(
     tiledb_query_t* query,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    const tiledb_buffer_t* buffer);
+    const tiledb_buffer_t* buffer) TILEDB_NOEXCEPT;
 
 /**
  * Serializes the given config.
@@ -384,8 +553,10 @@ TILEDB_EXPORT int32_t tiledb_deserialize_query_est_result_sizes(
  * @param ctx The TileDB context.
  * @param config The config to serialize.
  * @param serialization_type Type of serialization to use
- * @param client_side If set to 1, serialize from "client-side" perspective.
- *    Else, "server-side.". Currently unused for config
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * Currently unused for config
  * @param buffer Will be set to a newly allocated buffer containing the
  *      serialized max buffer sizes.
  * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
@@ -395,14 +566,14 @@ TILEDB_EXPORT int32_t tiledb_serialize_config(
     const tiledb_config_t* config,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_buffer_t** buffer);
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
 
 /**
  * Deserializes a new config from the given buffer.
  *
  * @param ctx The TileDB context.
  * @param buffer Buffer to deserialize from
- * @param serialization_type Type of serialization to use
+ * @param serialization_type Type of serialization to use.
  * @param client_side If set to 1, deserialize from "client-side" perspective.
  *    Else, "server-side.". Currently unused for config
  * @param config Will be set to a newly allocated config.
@@ -413,7 +584,248 @@ TILEDB_EXPORT int32_t tiledb_deserialize_config(
     const tiledb_buffer_t* buffer,
     tiledb_serialization_type_t serialize_type,
     int32_t client_side,
-    tiledb_config_t** config);
+    tiledb_config_t** config) TILEDB_NOEXCEPT;
+
+/**
+ * Serializes the fragment info request into the given buffer.
+ *
+ * @note The caller must free the returned `tiledb_buffer_t`.
+ *
+ * @param ctx The TileDB context.
+ * @param fragment_info Fragment info to get the info to serialize.
+ * @param serialization_type Type of serialization to use.
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param buffer Will be set to a newly allocated buffer containing the
+ *      serialized fragment info request.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_serialize_fragment_info_request(
+    tiledb_ctx_t* ctx,
+    const tiledb_fragment_info_t* fragment_info,
+    tiledb_serialization_type_t serialize_type,
+    int32_t client_side,
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
+
+/**
+ * Populates fragment info by deserializing the fragment info request from the
+ * given buffer.
+ *
+ * @param ctx The TileDB context.
+ * @param buffer Buffer containing serialized fragment info request.
+ * @param serialization_type Type of serialization to use.
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param fragment_info Fragment info object to deserialize the info into.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_deserialize_fragment_info_request(
+    tiledb_ctx_t* ctx,
+    const tiledb_buffer_t* buffer,
+    tiledb_serialization_type_t serialize_type,
+    int32_t client_side,
+    tiledb_fragment_info_t* fragment_info) TILEDB_NOEXCEPT;
+
+/**
+ * Serializes the fragment info into the given buffer.
+ *
+ * @note The caller must free the returned `tiledb_buffer_t`.
+ *
+ * @param ctx The TileDB context.
+ * @param fragment_info Fragment info to serialize.
+ * @param serialization_type Type of serialization to use.
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param buffer Will be set to a newly allocated buffer containing the
+ *      serialized fragment info.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_serialize_fragment_info(
+    tiledb_ctx_t* ctx,
+    const tiledb_fragment_info_t* fragment_info,
+    tiledb_serialization_type_t serialization_type,
+    int32_t client_side,
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
+
+/**
+ * Populates the fragment info by deserializing from the given buffer.
+ *
+ * @param ctx The TileDB context.
+ * @param buffer Buffer containing serialized fragment info.
+ * @param serialization_type Type of serialization to use
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param array_uri array that fragment info belongs to
+ * @param fragment_info Fragment info to deserialize into.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_deserialize_fragment_info(
+    tiledb_ctx_t* ctx,
+    const tiledb_buffer_t* buffer,
+    tiledb_serialization_type_t serialize_type,
+    const char* array_uri,
+    int32_t client_side,
+    tiledb_fragment_info_t* fragment_info) TILEDB_NOEXCEPT;
+
+/**
+ * Serializes the given group.
+ *
+ * Where possible the serialization is zero-copy. The returned buffer list
+ * contains an ordered list of pointers to buffers that logically contain the
+ * entire serialized group when concatenated.
+ *
+ * @note The caller must free the returned `tiledb_buffer_list_t`.
+ *
+ * @param ctx The TileDB context.
+ * @param group The group.
+ * @param serialization_type Type of serialization to use
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param tiledb_buffer_t Will be set to a newly allocated buffer containing
+ *    the serialized group.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_serialize_group(
+    tiledb_ctx_t* ctx,
+    const tiledb_group_t* group,
+    tiledb_serialization_type_t serialize_type,
+    int32_t client_side,
+    tiledb_buffer_t** buffer_list) TILEDB_NOEXCEPT;
+
+/**
+ * Deserializes into an existing group from the given buffer.
+ *
+ * @note The deserialization is zero-copy, so the source buffer must exceed
+ * the lifetime of the group being deserialized to.
+ *
+ * @param ctx The TileDB context.
+ * @param buffer Buffer to deserialize from
+ * @param serialization_type Type of deserialization to use
+ * @param client_side Allows to specify different behavior depending on who is
+ * serializing, the client (1) or the Cloud server (0). This is sometimes needed
+ * since they are both using the same Core library APIs for serialization.
+ * @param group The group object to deserialize into (must be pre-allocated).
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_deserialize_group(
+    tiledb_ctx_t* ctx,
+    const tiledb_buffer_t* buffer,
+    tiledb_serialization_type_t serialize_type,
+    int32_t client_side,
+    tiledb_group_t* group) TILEDB_NOEXCEPT;
+
+/**
+ * Serializes the group metadata into the given buffer.
+ *
+ * @note The caller must free the returned `tiledb_buffer_t`.
+ *
+ * @param ctx The TileDB context.
+ * @param group Group whose metadata to serialize.
+ * @param serialization_type Type of serialization to use
+ * @param buffer Will be set to a newly allocated buffer containing the
+ *      serialized group metadata.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_serialize_group_metadata(
+    tiledb_ctx_t* ctx,
+    const tiledb_group_t* group,
+    tiledb_serialization_type_t serialization_type,
+    tiledb_buffer_t** buffer) TILEDB_NOEXCEPT;
+
+/**
+ * Sets the group metadata on the given group instance by deserializing the
+ * group metadata from the given buffer.
+ *
+ * @param ctx The TileDB context.
+ * @param group Group whose metadata to set.
+ * @param serialization_type Type of serialization to use
+ * @param buffer Buffer containing serialized group metadata.
+ * @return `TILEDB_OK` for success and `TILEDB_ERR` for error.
+ */
+TILEDB_EXPORT int32_t tiledb_deserialize_group_metadata(
+    tiledb_ctx_t* ctx,
+    tiledb_group_t* group,
+    tiledb_serialization_type_t serialization_type,
+    const tiledb_buffer_t* buffer) TILEDB_NOEXCEPT;
+
+/**
+ * Process a load array schema request.
+ *
+ * @param ctx The TileDB context.
+ * @param array The TileDB Array.
+ * @param serialization_type The type of Cap'n Proto serialization used.
+ * @param request A buffer containing the LoadArraySchemaRequest Cap'n Proto
+ *        message.
+ * @param response An allocated buffer that will contain the
+ *        LoadArraySchemaResponse Cap'n Proto message.
+ * @return capi_return_t TILEDB_OK on success, TILEDB_ERR on error.
+ */
+TILEDB_EXPORT capi_return_t tiledb_handle_load_array_schema_request(
+    tiledb_ctx_t* ctx,
+    tiledb_array_t* array,
+    tiledb_serialization_type_t serialization_type,
+    const tiledb_buffer_t* request,
+    tiledb_buffer_t* response) TILEDB_NOEXCEPT;
+
+/**
+ * Process a load enumerations request.
+ *
+ * @param ctx The TileDB context.
+ * @param array The TileDB Array.
+ * @param serialization_type The type of Cap'n Proto serialization used.
+ * @param request A buffer containing the LoadEnumerationsRequest Capnp message.
+ * @param response An allocated buffer that will contain the
+ *        LoadEnumerationsResponse Capnp message.
+ * @return capi_return_t TILEDB_OK on success, TILEDB_ERR on error.
+ */
+TILEDB_EXPORT capi_return_t tiledb_handle_load_enumerations_request(
+    tiledb_ctx_t* ctx,
+    tiledb_array_t* array,
+    tiledb_serialization_type_t serialization_type,
+    const tiledb_buffer_t* request,
+    tiledb_buffer_t* response) TILEDB_NOEXCEPT;
+
+/**
+ * Process a query plan request.
+ *
+ * @param ctx The TileDB context.
+ * @param array The TileDB Array.
+ * @param serialization_type The type of Cap'n Proto serialization used.
+ * @param request A buffer containing the QueryPlanRequest Capnp message.
+ * @param response An allocated buffer that will contain the QueryPlanResponse
+ * Capnp message.
+ * @return capi_return_t TILEDB_OK on success, TILEDB_ERR on error.
+ */
+TILEDB_EXPORT capi_return_t tiledb_handle_query_plan_request(
+    tiledb_ctx_t* ctx,
+    tiledb_array_t* array,
+    tiledb_serialization_type_t serialization_type,
+    const tiledb_buffer_t* request,
+    tiledb_buffer_t* response) TILEDB_NOEXCEPT;
+
+/**
+ * Process a consolidation plan request.
+ *
+ * @param ctx The TileDB context.
+ * @param array The TileDB Array.
+ * @param serialization_type The type of Cap'n Proto serialization used.
+ * @param request A buffer containing the ConsolidationPlanRequest Capnp
+ * message.
+ * @param response An allocated buffer that will contain the
+ * ConsolidationPlanResponse Capnp message.
+ * @return capi_return_t TILEDB_OK on success, TILEDB_ERR on error.
+ */
+TILEDB_EXPORT capi_return_t tiledb_handle_consolidation_plan_request(
+    tiledb_ctx_t* ctx,
+    tiledb_array_t* array,
+    tiledb_serialization_type_t serialization_type,
+    const tiledb_buffer_t* request,
+    tiledb_buffer_t* response) TILEDB_NOEXCEPT;
 
 #ifdef __cplusplus
 }

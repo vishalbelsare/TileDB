@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -44,42 +44,48 @@ using namespace tiledb::common;
 namespace tiledb {
 namespace sm {
 
-EncryptionAES256GCMFilter::EncryptionAES256GCMFilter()
-    : Filter(FilterType::INTERNAL_FILTER_AES_256_GCM) {
+EncryptionAES256GCMFilter::EncryptionAES256GCMFilter(Datatype filter_data_type)
+    : Filter(FilterType::INTERNAL_FILTER_AES_256_GCM, filter_data_type) {
   set_key(nullptr);
 }
 
 EncryptionAES256GCMFilter::EncryptionAES256GCMFilter(
-    const EncryptionKey& encryption_key)
-    : Filter(FilterType::INTERNAL_FILTER_AES_256_GCM) {
+    const EncryptionKey& encryption_key, Datatype filter_data_type)
+    : Filter(FilterType::INTERNAL_FILTER_AES_256_GCM, filter_data_type) {
   auto buff = encryption_key.key();
   set_key(buff.data());
 }
 
 EncryptionAES256GCMFilter* EncryptionAES256GCMFilter::clone_impl() const {
-  auto clone = new EncryptionAES256GCMFilter;
+  auto clone = tdb_new(EncryptionAES256GCMFilter, filter_data_type_);
   // Copy key bytes buffer.
   clone->key_bytes_ = key_bytes_;
   return clone;
 }
 
-void EncryptionAES256GCMFilter::dump(FILE* out) const {
-  if (out == nullptr)
-    out = stdout;
-
-  fprintf(out, "EncryptionAES256GCM");
+std::ostream& EncryptionAES256GCMFilter::output(std::ostream& os) const {
+  os << "EncryptionAES256GCM";
+  return os;
 }
 
-Status EncryptionAES256GCMFilter::run_forward(
+Datatype EncryptionAES256GCMFilter::output_datatype(Datatype) const {
+  /* encryption gives us meaningless bits with overwhelming probability */
+  return Datatype::BLOB;
+}
+
+void EncryptionAES256GCMFilter::run_forward(
+    const WriterTile&,
+    WriterTile* const,
     FilterBuffer* input_metadata,
     FilterBuffer* input,
     FilterBuffer* output_metadata,
     FilterBuffer* output) const {
-  if (key_bytes_ == nullptr)
-    return LOG_STATUS(Status::FilterError("Encryption error; bad key."));
+  if (key_bytes_ == nullptr) {
+    throw FilterStatusException("Encryption error; bad key.");
+  }
 
   // Allocate an initial output buffer.
-  RETURN_NOT_OK(output->prepend_buffer(input->size()));
+  throw_if_not_ok(output->prepend_buffer(input->size()));
   Buffer* output_buf = output->buffer_ptr(0);
   assert(output_buf != nullptr);
 
@@ -93,17 +99,16 @@ Status EncryptionAES256GCMFilter::run_forward(
                           Crypto::AES256GCM_IV_BYTES;
   uint32_t metadata_size =
       2 * sizeof(uint32_t) + total_num_parts * part_md_size;
-  RETURN_NOT_OK(output_metadata->prepend_buffer(metadata_size));
-  RETURN_NOT_OK(output_metadata->write(&num_metadata_parts, sizeof(uint32_t)));
-  RETURN_NOT_OK(output_metadata->write(&num_data_parts, sizeof(uint32_t)));
+  throw_if_not_ok(output_metadata->prepend_buffer(metadata_size));
+  throw_if_not_ok(
+      output_metadata->write(&num_metadata_parts, sizeof(uint32_t)));
+  throw_if_not_ok(output_metadata->write(&num_data_parts, sizeof(uint32_t)));
 
   // Encrypt all parts
   for (auto& part : metadata_parts)
-    RETURN_NOT_OK(encrypt_part(&part, output_buf, output_metadata));
+    throw_if_not_ok(encrypt_part(&part, output_buf, output_metadata));
   for (auto& part : data_parts)
-    RETURN_NOT_OK(encrypt_part(&part, output_buf, output_metadata));
-
-  return Status::Ok();
+    throw_if_not_ok(encrypt_part(&part, output_buf, output_metadata));
 }
 
 Status EncryptionAES256GCMFilter::encrypt_part(
@@ -124,7 +129,7 @@ Status EncryptionAES256GCMFilter::encrypt_part(
 
   if (output->size() > std::numeric_limits<uint32_t>::max())
     return LOG_STATUS(
-        Status::FilterError("Encrypted output exceeds uint32 max."));
+        Status_FilterError("Encrypted output exceeds uint32 max."));
 
   // Write metadata.
   uint32_t input_size = (uint32_t)part->size(),
@@ -138,14 +143,15 @@ Status EncryptionAES256GCMFilter::encrypt_part(
 }
 
 Status EncryptionAES256GCMFilter::run_reverse(
+    const Tile&,
+    Tile*,
     FilterBuffer* input_metadata,
     FilterBuffer* input,
     FilterBuffer* output_metadata,
     FilterBuffer* output,
-    const Config& config) const {
-  (void)config;
+    const Config&) const {
   if (key_bytes_ == nullptr)
-    return LOG_STATUS(Status::FilterError("Encryption error; bad key."));
+    return LOG_STATUS(Status_FilterError("Encryption error; bad key."));
 
   // Read the number of parts from input metadata.
   uint32_t num_metadata_parts, num_data_parts;
@@ -192,7 +198,7 @@ Status EncryptionAES256GCMFilter::decrypt_part(
     RETURN_NOT_OK(output->realloc(output->alloced_size() + plaintext_size));
   } else if (output->offset() + plaintext_size > output->size()) {
     return LOG_STATUS(
-        Status::FilterError("Encryption error; output buffer too small."));
+        Status_FilterError("Encryption error; output buffer too small."));
   }
 
   // Set up the input buffer.
@@ -208,27 +214,27 @@ Status EncryptionAES256GCMFilter::decrypt_part(
   return Status::Ok();
 }
 
-Status EncryptionAES256GCMFilter::set_key(const EncryptionKey& key) {
+void EncryptionAES256GCMFilter::set_key(const EncryptionKey& key) {
   auto key_buff = key.key();
 
-  if (key.encryption_type() != EncryptionType::AES_256_GCM)
-    return LOG_STATUS(
-        Status::FilterError("Encryption error; invalid key encryption type."));
+  if (key.encryption_type() != EncryptionType::AES_256_GCM) {
+    throw LOG_STATUS(
+        Status_FilterError("Encryption error; invalid key encryption type."));
+    return;
+  }
 
   if (key_buff.data() == nullptr ||
-      key_buff.size() != Crypto::AES256GCM_KEY_BYTES)
-    return LOG_STATUS(
-        Status::FilterError("Encryption error; invalid key for AES-256-GCM."));
+      key_buff.size() != Crypto::AES256GCM_KEY_BYTES) {
+    throw LOG_STATUS(
+        Status_FilterError("Encryption error; invalid key for AES-256-GCM."));
+    return;
+  }
 
   key_bytes_ = key_buff.data();
-
-  return Status::Ok();
 }
 
-Status EncryptionAES256GCMFilter::set_key(const void* key_bytes) {
+void EncryptionAES256GCMFilter::set_key(const void* key_bytes) {
   key_bytes_ = key_bytes;
-
-  return Status::Ok();
 }
 
 Status EncryptionAES256GCMFilter::get_key(const void** key_bytes) const {

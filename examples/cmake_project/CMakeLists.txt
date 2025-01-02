@@ -25,7 +25,7 @@
 # THE SOFTWARE.
 #
 
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.21)
 project(TileDBExampleProj)
 
 # Set C++17 as required standard for all C++ targets (required to use the TileDB
@@ -40,17 +40,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #   $ cmake -DCMAKE_PREFIX_PATH=/path/to/TileDB-installation ..
 # or you can hardcode it here e.g.
 #   list(APPEND CMAKE_PREFIX_PATH "/path/to/TileDB-installation")
-find_package(TileDB REQUIRED)
+find_package(TileDB 
+  ${TILEDB_VERSION} EXACT
+  CONFIG
+  REQUIRED
+  )
 
 # Set up the example program.
 add_executable(ExampleExe "src/main.cc")
 
-# Link the example program with the TileDB shared library.
+# Link the example program with the TileDB library.
 # This also configures include paths to find the TileDB headers.
-target_link_libraries(ExampleExe TileDB::tiledb_shared)
-
-# Link a second executable with the TileDB static library, if it is available.
-if (TARGET TileDB::tiledb_static)
-  add_executable(ExampleExe_static "src/main.cc")
-  target_link_libraries(ExampleExe_static TileDB::tiledb_static)
-endif()
+target_link_libraries(ExampleExe TileDB::tiledb)

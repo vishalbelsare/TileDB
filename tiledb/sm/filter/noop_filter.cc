@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -40,39 +40,38 @@ using namespace tiledb::common;
 namespace tiledb {
 namespace sm {
 
-NoopFilter::NoopFilter()
-    : Filter(FilterType::FILTER_NONE) {
+NoopFilter::NoopFilter(Datatype filter_data_type)
+    : Filter(FilterType::FILTER_NONE, filter_data_type) {
 }
 
 NoopFilter* NoopFilter::clone_impl() const {
-  return new NoopFilter;
+  return tdb_new(NoopFilter, filter_data_type_);
 }
 
-void NoopFilter::dump(FILE* out) const {
-  if (out == nullptr)
-    out = stdout;
-
-  fprintf(out, "NoOp");
+std::ostream& NoopFilter::output(std::ostream& os) const {
+  os << "NoOp";
+  return os;
 }
 
-Status NoopFilter::run_forward(
+void NoopFilter::run_forward(
+    const WriterTile&,
+    WriterTile* const,
     FilterBuffer* input_metadata,
     FilterBuffer* input,
     FilterBuffer* output_metadata,
     FilterBuffer* output) const {
-  RETURN_NOT_OK(output->append_view(input));
-  RETURN_NOT_OK(output_metadata->append_view(input_metadata));
-  return Status::Ok();
+  throw_if_not_ok(output->append_view(input));
+  throw_if_not_ok(output_metadata->append_view(input_metadata));
 }
 
 Status NoopFilter::run_reverse(
+    const Tile&,
+    Tile*,
     FilterBuffer* input_metadata,
     FilterBuffer* input,
     FilterBuffer* output_metadata,
     FilterBuffer* output,
-    const Config& config) const {
-  (void)config;
-
+    const Config&) const {
   RETURN_NOT_OK(output->append_view(input));
   RETURN_NOT_OK(output_metadata->append_view(input_metadata));
   return Status::Ok();

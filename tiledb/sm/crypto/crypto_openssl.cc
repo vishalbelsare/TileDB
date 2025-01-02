@@ -48,20 +48,19 @@ using namespace tiledb::common;
 namespace tiledb {
 namespace sm {
 
-Status OpenSSL::get_random_bytes(unsigned num_bytes, Buffer* output) {
-  if (output->free_space() < num_bytes)
-    RETURN_NOT_OK(output->realloc(output->alloced_size() + num_bytes));
-
-  int rc = RAND_bytes((unsigned char*)output->cur_data(), num_bytes);
-  if (rc < 1) {
-    char err_msg[256];
-    ERR_error_string_n(ERR_get_error(), err_msg, sizeof(err_msg));
-    return Status::EncryptionError(
-        "Cannot generate random bytes with OpenSSL: " + std::string(err_msg));
+static Status get_random_bytes(span<uint8_t> buffer) {
+  while (!buffer.empty()) {
+    int num_bytes =
+        int(std::min(buffer.size(), size_t(std::numeric_limits<int>::max())));
+    int rc = RAND_bytes(buffer.data(), num_bytes);
+    if (rc < 1) {
+      char err_msg[256];
+      ERR_error_string_n(ERR_get_error(), err_msg, sizeof(err_msg));
+      return Status_EncryptionError(
+          "Cannot generate random bytes with OpenSSL: " + std::string(err_msg));
+    }
+    buffer = buffer.subspan(num_bytes);
   }
-  output->advance_size(num_bytes);
-  output->advance_offset(num_bytes);
-
   return Status::Ok();
 }
 
@@ -74,7 +73,7 @@ Status OpenSSL::encrypt_aes256gcm(
     PreallocatedBuffer* output_tag) {
   // Check input size for int datatype used by OpenSSL.
   if (input->size() > static_cast<uint64_t>(std::numeric_limits<int>::max()))
-    return LOG_STATUS(Status::EncryptionError(
+    return LOG_STATUS(Status_EncryptionError(
         "OpenSSL error; cannot encrypt: input too large"));
 
   // Ensure sufficient space in output buffer.
@@ -83,11 +82,11 @@ Status OpenSSL::encrypt_aes256gcm(
     RETURN_NOT_OK(output->realloc(output->alloced_size() + required_space));
 
   // Generate IV if the given IV buffer is null.
-  Buffer generated_iv;
+  std::array<unsigned char, Crypto::AES256GCM_IV_BYTES> generated_iv;
   int iv_len;
   unsigned char* iv_buf;
   if (iv == nullptr || iv->data() == nullptr) {
-    RETURN_NOT_OK(get_random_bytes(Crypto::AES256GCM_IV_BYTES, &generated_iv));
+    RETURN_NOT_OK(get_random_bytes(generated_iv));
     iv_len = (int)generated_iv.size();
     iv_buf = (unsigned char*)generated_iv.data();
   } else {
@@ -99,7 +98,7 @@ Status OpenSSL::encrypt_aes256gcm(
 
   EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
   if (ctx == nullptr)
-    return LOG_STATUS(Status::EncryptionError(
+    return LOG_STATUS(Status_EncryptionError(
         "OpenSSL error; cannot encrypt: context allocation failed."));
 
   // Initialize the cipher. We use the default parameter lengths for the IV and
@@ -113,7 +112,7 @@ Status OpenSSL::encrypt_aes256gcm(
           iv_buf) == 0) {
     EVP_CIPHER_CTX_free(ctx);
     return LOG_STATUS(
-        Status::EncryptionError("OpenSSL error; error initializing cipher."));
+        Status_EncryptionError("OpenSSL error; error initializing cipher."));
   }
 
   // Encrypt the input.
@@ -126,7 +125,7 @@ Status OpenSSL::encrypt_aes256gcm(
           (int)input->size()) == 0) {
     EVP_CIPHER_CTX_free(ctx);
     return LOG_STATUS(
-        Status::EncryptionError("OpenSSL error; error encrypting data."));
+        Status_EncryptionError("OpenSSL error; error encrypting data."));
   }
   output->advance_size((uint64_t)output_len);
   output->advance_offset((uint64_t)output_len);
@@ -136,7 +135,7 @@ Status OpenSSL::encrypt_aes256gcm(
           ctx, (unsigned char*)output->cur_data(), &output_len) == 0) {
     EVP_CIPHER_CTX_free(ctx);
     return LOG_STATUS(
-        Status::EncryptionError("OpenSSL error; error finalizing encryption."));
+        Status_EncryptionError("OpenSSL error; error finalizing encryption."));
   }
   output->advance_size((uint64_t)output_len);
   output->advance_offset((uint64_t)output_len);
@@ -149,7 +148,7 @@ Status OpenSSL::encrypt_aes256gcm(
           (char*)output_tag->data()) == 0) {
     EVP_CIPHER_CTX_free(ctx);
     return LOG_STATUS(
-        Status::EncryptionError("OpenSSL error; error getting tag."));
+        Status_EncryptionError("OpenSSL error; error getting tag."));
   }
 
   // Clean up.
@@ -166,7 +165,7 @@ Status OpenSSL::decrypt_aes256gcm(
     Buffer* output) {
   // Check input size for int datatype used by OpenSSL.
   if (input->size() > static_cast<uint64_t>(std::numeric_limits<int>::max()))
-    return LOG_STATUS(Status::EncryptionError(
+    return LOG_STATUS(Status_EncryptionError(
         "OpenSSL error; cannot decrypt: input too large"));
 
   // Ensure sufficient space in output buffer.
@@ -175,13 +174,13 @@ Status OpenSSL::decrypt_aes256gcm(
     if (output->free_space() < required_space)
       RETURN_NOT_OK(output->realloc(output->alloced_size() + required_space));
   } else if (output->size() < required_space) {
-    return LOG_STATUS(Status::EncryptionError(
+    return LOG_STATUS(Status_EncryptionError(
         "OpenSSL error; cannot decrypt: output buffer too small."));
   }
 
   EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
   if (ctx == nullptr)
-    return LOG_STATUS(Status::EncryptionError(
+    return LOG_STATUS(Status_EncryptionError(
         "OpenSSL error; cannot decrypt: context allocation failed."));
 
   // Initialize the cipher. We use the default parameter lengths for the IV and
@@ -195,7 +194,7 @@ Status OpenSSL::decrypt_aes256gcm(
           (unsigned char*)iv->data()) == 0) {
     EVP_CIPHER_CTX_free(ctx);
     return LOG_STATUS(
-        Status::EncryptionError("OpenSSL error; error initializing cipher."));
+        Status_EncryptionError("OpenSSL error; error initializing cipher."));
   }
 
   // Decrypt the input.
@@ -208,7 +207,7 @@ Status OpenSSL::decrypt_aes256gcm(
           (int)input->size()) == 0) {
     EVP_CIPHER_CTX_free(ctx);
     return LOG_STATUS(
-        Status::EncryptionError("OpenSSL error; error decrypting data."));
+        Status_EncryptionError("OpenSSL error; error decrypting data."));
   }
   if (output->owns_data())
     output->advance_size((uint64_t)output_len);
@@ -222,7 +221,7 @@ Status OpenSSL::decrypt_aes256gcm(
           (char*)tag->data()) == 0) {
     EVP_CIPHER_CTX_free(ctx);
     return LOG_STATUS(
-        Status::EncryptionError("OpenSSL error; error setting tag."));
+        Status_EncryptionError("OpenSSL error; error setting tag."));
   }
 
   // Finalize decryption.
@@ -230,7 +229,7 @@ Status OpenSSL::decrypt_aes256gcm(
           ctx, (unsigned char*)output->cur_data(), &output_len) == 0) {
     EVP_CIPHER_CTX_free(ctx);
     return LOG_STATUS(
-        Status::EncryptionError("OpenSSL error; error finalizing decryption."));
+        Status_EncryptionError("OpenSSL error; error finalizing decryption."));
   }
   if (output->owns_data())
     output->advance_size((uint64_t)output_len);
@@ -250,7 +249,7 @@ Status OpenSSL::md5(
     if (output->free_space() < required_space)
       RETURN_NOT_OK(output->realloc(output->alloced_size() + required_space));
   } else if (output->size() < required_space) {
-    return LOG_STATUS(Status::ChecksumError(
+    return LOG_STATUS(Status_ChecksumError(
         "OpenSSL error; cannot checksum: output buffer too small."));
   }
   MD5(static_cast<const unsigned char*>(input),
@@ -267,7 +266,7 @@ Status OpenSSL::sha256(
     if (output->free_space() < required_space)
       RETURN_NOT_OK(output->realloc(output->alloced_size() + required_space));
   } else if (output->size() < required_space) {
-    return LOG_STATUS(Status::ChecksumError(
+    return LOG_STATUS(Status_ChecksumError(
         "OpenSSL error; cannot checksum: output buffer too small."));
   }
   SHA256(

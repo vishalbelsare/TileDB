@@ -35,22 +35,28 @@
 
 #include "tiledb/common/status.h"
 #include "tiledb/sm/enums/layout.h"
+#include "tiledb/sm/enums/query_status_details.h"
 
 using namespace tiledb::common;
 
 namespace tiledb {
 namespace sm {
 
+/** Class for query status exceptions. */
+class QueryException : public StatusException {
+ public:
+  explicit QueryException(const std::string& msg)
+      : StatusException("Query", msg) {
+  }
+};
+
 class IQueryStrategy {
  public:
   /** Destructor. */
   virtual ~IQueryStrategy() = default;
 
-  /** Initializes the strategy. */
-  virtual Status init() = 0;
-
   /** Initialize the memory budget variables. */
-  virtual Status initialize_memory_budget() = 0;
+  virtual void refresh_config() = 0;
 
   /** Performs a query using its set members. */
   virtual Status dowork() = 0;
@@ -58,11 +64,17 @@ class IQueryStrategy {
   /** Finalizes the strategy. */
   virtual Status finalize() = 0;
 
-  /** Returns of the query is incomplete. */
+  /** Returns if the query is incomplete. */
   virtual bool incomplete() const = 0;
+
+  /** Returns the status details reason. */
+  virtual QueryStatusDetailsReason status_incomplete_reason() const = 0;
 
   /** Resets the object */
   virtual void reset() = 0;
+
+  /** Returns the name of the strategy */
+  virtual std::string name() = 0;
 };
 
 }  // namespace sm

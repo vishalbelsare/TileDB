@@ -30,13 +30,14 @@
  * Tests the C++ API for array metadata.
  */
 
-#include "test/src/helpers.h"
-#include "test/src/vfs_helpers.h"
+#include "test/support/src/helpers.h"
+#include "test/support/src/vfs_helpers.h"
 #include "tiledb/sm/c_api/tiledb.h"
 #include "tiledb/sm/c_api/tiledb_struct_def.h"
 #include "tiledb/sm/config/config.h"
 #include "tiledb/sm/cpp_api/tiledb"
 #include "tiledb/sm/enums/encryption_type.h"
+#include "tiledb/sm/misc/tdb_time.h"
 
 #ifdef _WIN32
 #include "tiledb/sm/filesystem/win.h"
@@ -44,7 +45,7 @@
 #include "tiledb/sm/filesystem/posix.h"
 #endif
 
-#include <catch.hpp>
+#include <test/support/tdb_catch.h>
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -65,8 +66,6 @@ struct CPPMetadataFx {
   const char* ARRAY_NAME = "test_metadata";
   tiledb_array_t* array_ = nullptr;
   const char* key_ = "0123456789abcdeF0123456789abcdeF";
-  const uint32_t key_len_ =
-      (uint32_t)strlen("0123456789abcdeF0123456789abcdeF");
   const tiledb_encryption_type_t enc_type_ = TILEDB_AES_256_GCM;
 
   void create_default_array_1d();
@@ -134,7 +133,6 @@ void CPPMetadataFx::create_default_array_1d_with_key() {
       array_name_,
       enc_type_,
       key_,
-      key_len_,
       TILEDB_DENSE,
       {"d"},
       {TILEDB_UINT64},
@@ -163,8 +161,8 @@ TEST_CASE_METHOD(
   create_default_array_1d();
 
   // Put metadata in an array opened for reads - error
-  Context ctx;
-  Array array(ctx, std::string(array_name_), TILEDB_READ);
+  tiledb::Context ctx;
+  tiledb::Array array(ctx, std::string(array_name_), TILEDB_READ);
   int v = 5;
   CHECK_THROWS(array.put_metadata("key", TILEDB_INT32, 1, &v));
   array.close();
@@ -190,8 +188,8 @@ TEST_CASE_METHOD(
   create_default_array_1d();
 
   // Open array in write mode
-  Context ctx;
-  Array array(ctx, std::string(array_name_), TILEDB_WRITE);
+  tiledb::Context ctx;
+  tiledb::Array array(ctx, std::string(array_name_), TILEDB_WRITE);
 
   // Write items
   int32_t v = 5;
@@ -274,8 +272,8 @@ TEST_CASE_METHOD(
   create_default_array_1d();
 
   // Open array in write mode
-  Context ctx;
-  Array array(ctx, std::string(array_name_), TILEDB_WRITE);
+  tiledb::Context ctx;
+  tiledb::Array array(ctx, std::string(array_name_), TILEDB_WRITE);
 
   // Write UTF-8 (≥ holds 3 bytes)
   int32_t v = 5;
@@ -314,8 +312,12 @@ TEST_CASE_METHOD(
   create_default_array_1d();
 
   // Create and open array in write mode
-  Context ctx;
-  Array array(ctx, std::string(array_name_), TILEDB_WRITE, 1);
+  tiledb::Context ctx;
+  tiledb::Array array(
+      ctx,
+      std::string(array_name_),
+      TILEDB_WRITE,
+      tiledb::TemporalPolicy(tiledb::TimeTravel, 1));
 
   // Write items
   int32_t v = 5;
@@ -370,12 +372,15 @@ TEST_CASE_METHOD(
     CPPMetadataFx,
     "C++ API: Metadata, multiple metadata and consolidate",
     "[cppapi][metadata][multiple][consolidation]") {
+  Config cfg;
+  cfg["sm.consolidation.buffer_size"] = "10000";
+
   // Create default array
   create_default_array_1d();
 
   // Create and open array in write mode
-  Context ctx;
-  Array array(ctx, array_name_, TILEDB_WRITE);
+  tiledb::Context ctx(cfg);
+  tiledb::Array array(ctx, array_name_, TILEDB_WRITE);
 
   // Write items
   int32_t v = 5;
@@ -433,9 +438,9 @@ TEST_CASE_METHOD(
   array.close();
 
   // Consolidate
-  Config consolidation_cfg;
+  tiledb::Config consolidation_cfg;
   consolidation_cfg["sm.consolidation.mode"] = "array_meta";
-  Array::consolidate(ctx, array_name_, &consolidation_cfg);
+  tiledb::Array::consolidate(ctx, array_name_, &consolidation_cfg);
 
   // Open the array in read mode
   array.open(TILEDB_READ);
@@ -457,7 +462,7 @@ TEST_CASE_METHOD(
   array.close();
 
   // Consolidate again
-  Array::consolidate(ctx, array_name_, &consolidation_cfg);
+  tiledb::Array::consolidate(ctx, array_name_, &consolidation_cfg);
 
   // Open the array in read mode
   array.open(TILEDB_READ);
@@ -485,8 +490,8 @@ TEST_CASE_METHOD(
   create_default_array_1d();
 
   // Create and open array in write mode
-  Context ctx;
-  Array array(ctx, array_name_, TILEDB_WRITE);
+  tiledb::Context ctx;
+  tiledb::Array array(ctx, array_name_, TILEDB_WRITE);
 
   // Write items
   int32_t v = 5;
@@ -532,8 +537,8 @@ TEST_CASE_METHOD(
   create_default_array_1d();
 
   // Open array in write mode
-  Context ctx;
-  Array array(ctx, array_name_, TILEDB_WRITE);
+  tiledb::Context ctx;
+  tiledb::Array array(ctx, array_name_, TILEDB_WRITE);
 
   // Write items
   int32_t v = 5;
@@ -596,8 +601,8 @@ TEST_CASE_METHOD(
       encryption_type_str((tiledb::sm::EncryptionType)enc_type_);
   cfg["sm.encryption_type"] = enc_type_str.c_str();
   cfg["sm.encryption_key"] = key_;
-  Context ctx(cfg);
-  Array array(ctx, array_name_, TILEDB_WRITE);
+  tiledb::Context ctx(cfg);
+  tiledb::Array array(ctx, array_name_, TILEDB_WRITE);
 
   // Write items
   int32_t v = 5;
@@ -655,15 +660,15 @@ TEST_CASE_METHOD(
   array.close();
 
   // Consolidate without key - error
-  Config consolidate_without_key;
-  Context ctx_without_key(consolidate_without_key);
-  CHECK_THROWS(Array::consolidate(
+  tiledb::Config consolidate_without_key;
+  tiledb::Context ctx_without_key(consolidate_without_key);
+  CHECK_THROWS(tiledb::Array::consolidate(
       ctx_without_key, array_name_, &consolidate_without_key));
 
   // Consolidate with key - ok
-  Config consolidation_cfg;
+  tiledb::Config consolidation_cfg;
   consolidation_cfg["sm.consolidation.mode"] = "array_meta";
-  Array::consolidate(ctx, array_name_, &consolidation_cfg);
+  tiledb::Array::consolidate(ctx, array_name_, &consolidation_cfg);
 
   // Open the array in read mode
   array.open(TILEDB_READ);
@@ -685,7 +690,7 @@ TEST_CASE_METHOD(
   array.close();
 
   // Consolidate again
-  Array::consolidate_metadata(ctx, array_name_, &consolidation_cfg);
+  tiledb::Array::consolidate_metadata(ctx, array_name_, &consolidation_cfg);
 
   // Open the array in read mode
   array.open(TILEDB_READ);

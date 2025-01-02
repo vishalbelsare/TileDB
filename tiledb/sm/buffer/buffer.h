@@ -35,12 +35,20 @@
 #define TILEDB_BUFFER_H
 
 #include <cinttypes>
+#include "tiledb/common/pmr.h"
 #include "tiledb/common/status.h"
 
 using namespace tiledb::common;
 
 namespace tiledb {
 namespace sm {
+
+class BufferStatusException : public StatusException {
+ public:
+  explicit BufferStatusException(const std::string& msg)
+      : StatusException("Buffer", msg) {
+  }
+};
 
 class ConstBuffer;
 
@@ -79,6 +87,12 @@ class BufferBase {
   /** Returns pointer to data at the current offset. */
   const void* cur_data() const;
 
+  /** Returns the data pointer as a specific type. */
+  template <typename T>
+  inline T* data_as() const {
+    return static_cast<T*>(data_);
+  }
+
   /**
    * Reads from the local data into the input buffer.
    *
@@ -89,6 +103,27 @@ class BufferBase {
   Status read(void* destination, uint64_t nbytes);
 
   /**
+   * Wraps the read function, converting Status error to a runtime exception
+   * using the name of the requested variable.
+   *
+   * If read failed, a runtime exception will be throw with the message:
+   *
+   *   "Failed to load " + variable_description + "."
+   *
+   * @param destination The buffer to read the data into.
+   * @param nbytes The number of bytes to read.
+   * @param variable_description Name of the variable to use if read fails.
+   */
+  inline void read(
+      void* destination,
+      uint64_t nbytes,
+      const std::string& variable_description) {
+    auto st = read(destination, nbytes);
+    if (!st.ok())
+      throw std::runtime_error("Failed to load " + variable_description + ".");
+  }
+
+  /**
    * Reads from the local data at an offset into the input buffer.
    *
    * @param destination The buffer to read the data into.
@@ -97,6 +132,18 @@ class BufferBase {
    * @return Status
    */
   Status read(void* destination, uint64_t offset, uint64_t nbytes);
+
+  /**
+   * Implicit conversion operator to span.
+   *
+   * @return A span to the buffer's whole data.
+   */
+  operator span<const char>() const&;
+
+  /**
+   * Returns a span to the buffer's data after the offset.
+   */
+  span<const char> cur_span() const&;
 
  protected:
   BufferBase();
@@ -139,6 +186,15 @@ class Buffer : public BufferBase {
  public:
   /** Default constructor. */
   Buffer();
+
+  /**
+   * Owning constructor for preallocated fixed size Buffer.
+   * The resulting Buffer object will have ownership of it's data.
+   * Buffers using this constructor will never reallocate.
+   *
+   * @param size The size in bytes to preallocate.
+   */
+  Buffer(uint64_t size);
 
   /**
    * Non-owning constructor.
@@ -189,14 +245,13 @@ class Buffer : public BufferBase {
   /** Returns the buffer data pointer at the current offset. */
   void* cur_data() const;
 
+  template <typename T>
+  inline T* cur_data_as() const {
+    return static_cast<T*>(nonconst_unread_data());
+  }
+
   /** Returns the buffer data pointer at the input offset. */
   void* data(uint64_t offset) const;
-
-  /**
-   * Sets `owns_data_` to `false` and thus will not destroy the data
-   * in the destructor.
-   */
-  void disown_data();
 
   /** Returns the number of byte of free space in the buffer. */
   uint64_t free_space() const;
@@ -224,9 +279,8 @@ class Buffer : public BufferBase {
    * offset, data ownership, etc).
    *
    * @param other Buffer to swap with.
-   * @return Status
    */
-  Status swap(Buffer& other);
+  void swap(Buffer& other);
 
   /**
    * Returns the value of type T at the input offset.
@@ -305,6 +359,12 @@ class Buffer : public BufferBase {
    */
   bool owns_data_;
 
+  /**
+   * True if the buffer is preallocated to a fixed size.
+   * If this flag is set an error will be thrown when trying to reallocate.
+   */
+  bool preallocated_ = false;
+
   /** The allocated buffer size. */
   uint64_t alloced_size_;
 
@@ -375,6 +435,159 @@ class ConstBuffer : public BufferBase {
   template <class T>
   inline T value() const {
     return ((const T*)(((const char*)data_) + offset_))[0];
+  }
+};
+
+/**
+ * Manages a byte buffer that is used for capnp (de)serialization.
+ *
+ * The buffer can be either owned by this class (happens in cases of
+ * serialization) or not (typically user-managed, happens in cases of
+ * deserialization).
+ */
+class SerializationBuffer {
+ private:
+  /**
+   * Manages the memory of the buffer, if it is owned by this class.
+   *
+   * In the case of non-owned buffers, this vector is empty. The vector is not
+   * wrapped in an std::optional to avoid losing the allocator when reassigning
+   * between owned and non-owned buffers.
+   *
+   * @invariant Unless buffer_owner_ gets cleared to assign a non-owned buffer,
+   * after updating the content of buffer_owner_, buffer_ must be set to the
+   * memory pointed by buffer_owner_.
+   */
+  tdb::pmr::vector<char> buffer_owner_;
+
+  /**
+   * The buffer's content. In the case of owned buffers, this points to the
+   * same memory as buffer_owner_.
+   */
+  span<const char> buffer_;
+
+ public:
+  /** Marker type for non-owned buffer assign methods. */
+  class NonOwnedMarker {};
+
+  /** Singleton instance of NonOwnedMarker. */
+  static constexpr NonOwnedMarker NonOwned{};
+
+  /**
+   * The type of the allocator used by the buffer. This is required to make the
+   * type allocator-aware.
+   */
+  using allocator_type = decltype(buffer_owner_)::allocator_type;
+
+  /**
+   * Constructor.
+   *
+   * @param alloc Allocator for owned buffers.
+   */
+  SerializationBuffer(const allocator_type& alloc)
+      : buffer_owner_(alloc)
+      , buffer_(buffer_owner_) {
+  }
+
+  DISABLE_COPY_AND_COPY_ASSIGN(SerializationBuffer);
+  DISABLE_MOVE_AND_MOVE_ASSIGN(SerializationBuffer);
+
+  /**
+   * Constructor for an owned buffer of a given size.
+   *
+   * The data is intended to be modified later with the owned_mutable_span()
+   * function.
+   *
+   * @param size The size of the buffer.
+   * @param alloc Allocator for the buffer.
+   */
+  SerializationBuffer(size_t size, const allocator_type& alloc)
+      : buffer_owner_(size, alloc)
+      , buffer_(buffer_owner_) {
+  }
+
+  /**
+   * Shorthand constructor for a non-owned buffer to a given pointer-size pair.
+   *
+   * @param data The data of the buffer.
+   * @param size The size of the buffer.
+   */
+  SerializationBuffer(
+      NonOwnedMarker,
+      const void* data,
+      size_t size,
+      const allocator_type& alloc)
+      : buffer_owner_(alloc)
+      , buffer_(static_cast<const char*>(data), size) {
+  }
+
+  /**
+   * Returns whether this class owns the underlying memory buffer and is
+   * responsible for freeing it.
+   */
+  bool is_owned() const {
+    return buffer_.data() == buffer_owner_.data();
+  }
+
+  /**
+   * Assigns a new owned buffer to the object.
+   *
+   * @param iter The iterator range to copy to the serialization buffer.
+   */
+  template <class Iter>
+  inline void assign(const Iter& iter) {
+    // Clear vector and deallocate its buffer.
+    buffer_owner_.clear();
+    buffer_owner_.shrink_to_fit();
+    buffer_owner_.assign(std::cbegin(iter), std::cend(iter));
+    buffer_ = buffer_owner_;
+  }
+
+  /**
+   * Assigns a new non-owned buffer to the object.
+   *
+   * @param iter The iterator range to wrap in the serialization buffer.
+   */
+  template <class Iter>
+  inline void assign(NonOwnedMarker, const Iter& iter) {
+    // Clear vector and deallocate its buffer.
+    buffer_owner_.clear();
+    buffer_owner_.shrink_to_fit();
+    buffer_ = iter;
+  }
+
+  /**
+   * Gets the number of bytes in the buffer.
+   */
+  inline size_t size() const {
+    return buffer_.size();
+  }
+
+  /**
+   * Returns a mutable span to the buffer's whole data.
+   *
+   * This function must be called only on owned buffers, otherwise it will
+   * throw.
+   *
+   * The span returned by this function must not be used after one of the assign
+   * methods is called.
+   *
+   * @return A mutable span to the buffer's whole data.
+   */
+  inline span<char> owned_mutable_span() & {
+    if (!is_owned())
+      throw BufferStatusException(
+          "Cannot get a mutable span of a non-owned buffer.");
+    return buffer_owner_;
+  }
+
+  /**
+   * Implicit conversion operator to span.
+   *
+   * @return A span to the buffer's whole data.
+   */
+  inline operator span<const char>() const& {
+    return buffer_;
   }
 };
 

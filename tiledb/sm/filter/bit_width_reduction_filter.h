@@ -1,11 +1,11 @@
 /**
- * @file   reduce_type_width_filter.h
+ * @file   bit_width_reduction_filter.h
  *
  * @section LICENSE
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -42,8 +42,8 @@ namespace tiledb {
 namespace sm {
 
 /**
- * A filter that compresses an array of unsigned integers by reducing the number
- * of bits per element if possible.
+ * A filter that compresses an array of integers by reducing the number of bits
+ * per element if possible.
  *
  * When compressing, the filter determines the min and max values of the input
  * elements within a window of size N. If the range of values can be represented
@@ -82,11 +82,27 @@ namespace sm {
  */
 class BitWidthReductionFilter : public Filter {
  public:
-  /** Constructor. */
-  BitWidthReductionFilter();
+  /**
+   * Constructor.
+   *
+   * @param filter_data_type Datatype the filter will operate on.
+   */
+  BitWidthReductionFilter(Datatype filter_data_type);
 
-  /** Dumps the filter details in ASCII format in the selected output. */
-  void dump(FILE* out) const override;
+  /**
+   * Constructor.
+   *
+   * @param max_window_size Window size in bytes to apply bit width reduction.
+   * @param filter_data_type Datatype the filter will operate on.
+   */
+  BitWidthReductionFilter(uint32_t max_window_size, Datatype filter_data_type);
+
+  /**
+   * Checks if the filter is applicable to the input datatype.
+   *
+   * @param datatype Input datatype to check filter compatibility.
+   */
+  bool accepts_input_datatype(Datatype datatype) const override;
 
   /** Return the max window size used by the filter. */
   uint32_t max_window_size() const;
@@ -94,7 +110,9 @@ class BitWidthReductionFilter : public Filter {
   /**
    * Reduce the bit size of the given input into the given output.
    */
-  Status run_forward(
+  void run_forward(
+      const WriterTile& tile,
+      WriterTile* const offsets_tile,
       FilterBuffer* input_metadata,
       FilterBuffer* input,
       FilterBuffer* output_metadata,
@@ -104,6 +122,8 @@ class BitWidthReductionFilter : public Filter {
    * Restore the bit size the given input into the given output.
    */
   Status run_reverse(
+      const Tile& tile,
+      Tile* const offsets_tile,
       FilterBuffer* input_metadata,
       FilterBuffer* input,
       FilterBuffer* output_metadata,
@@ -112,6 +132,10 @@ class BitWidthReductionFilter : public Filter {
 
   /** Set the max window size (in bytes) to use. */
   void set_max_window_size(uint32_t max_window_size);
+
+ protected:
+  /** Dumps the filter details in ASCII format in the selected output string. */
+  std::ostream& output(std::ostream& os) const override;
 
  private:
   /** Maximum size, in bytes, of a window of input elements to compress. */
@@ -150,9 +174,6 @@ class BitWidthReductionFilter : public Filter {
   uint8_t compute_bits_required(
       ConstBuffer* buffer, uint32_t num_elements, T* min_value) const;
 
-  /** Deserializes this filter's metadata from the given buffer. */
-  Status deserialize_impl(ConstBuffer* buff) override;
-
   /** Gets an option from this filter. */
   Status get_option_impl(FilterOption option, void* value) const override;
 
@@ -172,7 +193,9 @@ class BitWidthReductionFilter : public Filter {
 
   /** Run_forward method templated on the tile cell datatype. */
   template <typename T>
-  Status run_forward(
+  void run_forward(
+      const WriterTile& tile,
+      WriterTile* const tile_offsets,
       FilterBuffer* input_metadata,
       FilterBuffer* input,
       FilterBuffer* output_metadata,
@@ -181,6 +204,8 @@ class BitWidthReductionFilter : public Filter {
   /** Run_reverse method templated on the tile cell datatype. */
   template <typename T>
   Status run_reverse(
+      const Tile& tile,
+      Tile* const tile_offsets,
       FilterBuffer* input_metadata,
       FilterBuffer* input,
       FilterBuffer* output_metadata,
@@ -190,7 +215,7 @@ class BitWidthReductionFilter : public Filter {
   Status set_option_impl(FilterOption option, const void* value) override;
 
   /** Serializes this filter's metadata to the given buffer. */
-  Status serialize_impl(Buffer* buff) const override;
+  void serialize_impl(Serializer& serializer) const override;
 
   /**
    * Writes the given value of type T to the given buffer after compressing

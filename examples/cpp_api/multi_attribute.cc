@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2018-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2018-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -63,29 +63,30 @@ void create_array() {
   schema.add_attribute(Attribute::create<float[2]>(ctx, "a2"));
 
   // Create the (empty) array on disk.
-  Array::create(array_name, schema);
+  Array::create(ctx, array_name, schema);
 }
 
 void write_array() {
   Context ctx;
 
   // Prepare some data for the array
-  std::vector<char> a1 = {'a',
-                          'b',
-                          'c',
-                          'd',
-                          'e',
-                          'f',
-                          'g',
-                          'h',
-                          'i',
-                          'j',
-                          'k',
-                          'l',
-                          'm',
-                          'n',
-                          'o',
-                          'p'};
+  std::vector<char> a1 = {
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+      'f',
+      'g',
+      'h',
+      'i',
+      'j',
+      'k',
+      'l',
+      'm',
+      'n',
+      'o',
+      'p'};
   std::vector<float> a2 = {1.1f,  1.2f,  2.1f,  2.2f,  3.1f,  3.2f,  4.1f,
                            4.2f,  5.1f,  5.2f,  6.1f,  6.2f,  7.1f,  7.2f,
                            8.1f,  8.2f,  9.1f,  9.2f,  10.1f, 10.2f, 11.1f,
@@ -111,7 +112,8 @@ void read_array() {
   Array array(ctx, array_name, TILEDB_READ);
 
   // Slice only rows 1, 2 and cols 2, 3, 4
-  const std::vector<int> subarray = {1, 2, 2, 4};
+  Subarray subarray(ctx, array);
+  subarray.add_range(0, 1, 2).add_range(1, 2, 4);
 
   // Prepare the vector that will hold the result
   // (of size 6 elements for "a1" and 12 elements for "a2" since
@@ -145,7 +147,8 @@ void read_array_subselect() {
   Array array(ctx, array_name, TILEDB_READ);
 
   // Slice only rows 1, 2 and cols 2, 3, 4
-  const std::vector<int> subarray = {1, 2, 2, 4};
+  Subarray subarray(ctx, array);
+  subarray.add_range(0, 1, 2).add_range(1, 2, 4);
 
   // Prepare the vector that will hold the result
   // (of size 6 elements for "a1")

@@ -5,8 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
- * @copyright Copyright (c) 2016 MIT and Intel Corporation
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,9 +37,9 @@
 #include <sstream>
 #include <thread>
 
-#include "catch.hpp"
-#include "test/src/helpers.h"
-#include "test/src/vfs_helpers.h"
+#include <test/support/tdb_catch.h>
+#include "test/support/src/helpers.h"
+#include "test/support/src/vfs_helpers.h"
 #ifdef _WIN32
 #include "tiledb/sm/filesystem/win.h"
 #else
@@ -50,7 +49,7 @@
 #include "tiledb/sm/c_api/tiledb_experimental.h"
 #include "tiledb/sm/c_api/tiledb_serialization.h"
 #include "tiledb/sm/enums/serialization_type.h"
-#include "tiledb/sm/misc/utils.h"
+#include "tiledb/sm/misc/constants.h"
 
 using namespace tiledb::test;
 
@@ -78,8 +77,8 @@ struct ArraySchemaFx {
   const tiledb_datatype_t DIM_TYPE = TILEDB_INT64;
   const char* DIM_TYPE_STR = "INT64";
   const int64_t DIM_DOMAIN[4] = {0, 99, 20, 60};
-  const char* DIM1_DOMAIN_STR = "[0,99]";
-  const char* DIM2_DOMAIN_STR = "[20,60]";
+  const char* DIM1_DOMAIN_STR = "[0, 99]";
+  const char* DIM2_DOMAIN_STR = "[20, 60]";
   const uint64_t DIM_DOMAIN_SIZE = sizeof(DIM_DOMAIN) / DIM_NUM;
   const uint32_t FILL_VALUE = 10;
   const char* FILL_VALUE_STR = "10";
@@ -122,7 +121,6 @@ struct ArraySchemaFx {
   void delete_array(const std::string& path);
   bool is_array(const std::string& path);
   void load_and_check_array_schema(const std::string& path);
-  static std::string random_name(const std::string& prefix);
 
   int array_create_wrapper(
       const std::string& path, tiledb_array_schema_t* array_schema);
@@ -780,7 +778,7 @@ void ArraySchemaFx::load_and_check_array_schema(const std::string& path) {
   const char* attr_name;
   rc = tiledb_attribute_get_name(ctx_, attr, &attr_name);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(attr_name, Catch::Equals(ATTR_NAME));
+  CHECK_THAT(attr_name, Catch::Matchers::Equals(ATTR_NAME));
   tiledb_attribute_free(&attr);
 
   // get first attribute by name
@@ -789,7 +787,7 @@ void ArraySchemaFx::load_and_check_array_schema(const std::string& path) {
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_attribute_get_name(ctx_, attr, &attr_name);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(attr_name, Catch::Equals(ATTR_NAME));
+  CHECK_THAT(attr_name, Catch::Matchers::Equals(ATTR_NAME));
 
   tiledb_datatype_t attr_type;
   rc = tiledb_attribute_get_type(ctx_, attr, &attr_type);
@@ -836,7 +834,7 @@ void ArraySchemaFx::load_and_check_array_schema(const std::string& path) {
   const char* dim_name;
   rc = tiledb_dimension_get_name(ctx_, dim, &dim_name);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(dim_name, Catch::Equals(DIM1_NAME));
+  CHECK_THAT(dim_name, Catch::Matchers::Equals(DIM1_NAME));
 
   tiledb_dimension_free(&dim);
 
@@ -845,7 +843,7 @@ void ArraySchemaFx::load_and_check_array_schema(const std::string& path) {
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_dimension_get_name(ctx_, dim, &dim_name);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(dim_name, Catch::Equals(DIM1_NAME));
+  CHECK_THAT(dim_name, Catch::Matchers::Equals(DIM1_NAME));
 
   const void* dim_domain;
   rc = tiledb_dimension_get_domain(ctx_, dim, &dim_domain);
@@ -865,7 +863,7 @@ void ArraySchemaFx::load_and_check_array_schema(const std::string& path) {
 
   rc = tiledb_dimension_get_name(ctx_, dim, &dim_name);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(dim_name, Catch::Equals(DIM2_NAME));
+  CHECK_THAT(dim_name, Catch::Matchers::Equals(DIM2_NAME));
   tiledb_dimension_free(&dim);
 
   // get from index
@@ -874,7 +872,7 @@ void ArraySchemaFx::load_and_check_array_schema(const std::string& path) {
 
   rc = tiledb_dimension_get_name(ctx_, dim, &dim_name);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(dim_name, Catch::Equals(DIM2_NAME));
+  CHECK_THAT(dim_name, Catch::Matchers::Equals(DIM2_NAME));
 
   rc = tiledb_dimension_get_domain(ctx_, dim, &dim_domain);
   REQUIRE(rc == TILEDB_OK);
@@ -908,10 +906,11 @@ void ArraySchemaFx::load_and_check_array_schema(const std::string& path) {
       "  > RLE: COMPRESSION_LEVEL=-1\n\n" + "### Dimension ###\n" +
       "- Name: " + DIM1_NAME + "\n" + "- Type: INT64\n" +
       "- Cell val num: 1\n" + "- Domain: " + DIM1_DOMAIN_STR + "\n" +
-      "- Tile extent: " + DIM1_TILE_EXTENT_STR + "\n" + "- Filters: 0\n\n" +
-      "### Dimension ###\n" + "- Name: " + DIM2_NAME + "\n" +
-      "- Type: INT64\n" + "- Cell val num: 1\n" +
-      "- Domain: " + DIM2_DOMAIN_STR + "\n" +
+      "- Tile extent: " + DIM1_TILE_EXTENT_STR + "\n" + "- Filters: 1\n" +
+      "  > ZSTD: COMPRESSION_LEVEL=-1\n\n"
+      "### Dimension ###\n" +
+      "- Name: " + DIM2_NAME + "\n" + "- Type: INT64\n" +
+      "- Cell val num: 1\n" + "- Domain: " + DIM2_DOMAIN_STR + "\n" +
       "- Tile extent: " + DIM2_TILE_EXTENT_STR + "\n" + "- Filters: 2\n" +
       "  > BZIP2: COMPRESSION_LEVEL=5\n" +
       "  > BitWidthReduction: BIT_WIDTH_MAX_WINDOW=1000\n\n" +
@@ -920,7 +919,11 @@ void ArraySchemaFx::load_and_check_array_schema(const std::string& path) {
       "- Cell val num: " + CELL_VAL_NUM_STR + "\n" + "- Filters: 2\n" +
       "  > BZIP2: COMPRESSION_LEVEL=5\n" +
       "  > BitWidthReduction: BIT_WIDTH_MAX_WINDOW=1000\n" +
-      "- Fill value: " + FILL_VALUE_STR + "\n";
+      "- Fill value: " + FILL_VALUE_STR + "\n" + "### Current domain ###\n" +
+      "- Version: " +
+      std::to_string(tiledb::sm::constants::current_domain_version) + "\n" +
+      "- Empty: 1" + "\n";
+
   FILE* gold_fout = fopen("gold_fout.txt", "w");
   const char* dump = dump_str.c_str();
   fwrite(dump, sizeof(char), strlen(dump), gold_fout);
@@ -943,13 +946,6 @@ void ArraySchemaFx::load_and_check_array_schema(const std::string& path) {
   tiledb_array_schema_free(&array_schema);
 }
 
-std::string ArraySchemaFx::random_name(const std::string& prefix) {
-  std::stringstream ss;
-  ss << prefix << "-" << std::this_thread::get_id() << "-"
-     << TILEDB_TIMESTAMP_NOW_MS;
-  return ss.str();
-}
-
 int ArraySchemaFx::get_schema_file_struct(const char* path, void* data) {
   auto data_struct = (ArraySchemaFx::schema_file_struct*)data;
   auto ctx = data_struct->ctx;
@@ -958,7 +954,10 @@ int ArraySchemaFx::get_schema_file_struct(const char* path, void* data) {
   int rc = tiledb_vfs_is_dir(ctx, vfs, path, &is_dir);
   CHECK(rc == TILEDB_OK);
 
-  data_struct->path = path;
+  if (!is_dir) {
+    data_struct->path = path;
+  }
+
   return 1;
 }
 
@@ -1026,7 +1025,7 @@ TEST_CASE_METHOD(
   CHECK(rc == TILEDB_OK);
   rc = tiledb_dimension_get_name(ctx_, get_dim, &get_name);
   CHECK(rc == TILEDB_OK);
-  CHECK_THAT(get_name, Catch::Equals("d2"));
+  CHECK_THAT(get_name, Catch::Matchers::Equals("d2"));
   tiledb_dimension_free(&get_dim);
 
   // Clean up
@@ -1064,6 +1063,43 @@ TEST_CASE_METHOD(
   // Clean up
   tiledb_dimension_free(&d1);
   tiledb_domain_free(&domain);
+  tiledb_array_schema_free(&array_schema);
+}
+
+TEST_CASE_METHOD(
+    ArraySchemaFx,
+    "C API: Test sparse array schema with invalid capacity",
+    "[capi][array-schema]") {
+  // Create array schema
+  tiledb_array_schema_t* array_schema;
+  int rc = tiledb_array_schema_alloc(ctx_, TILEDB_SPARSE, &array_schema);
+  REQUIRE(rc == TILEDB_OK);
+
+  // Check that zero capacity fails
+  rc = tiledb_array_schema_set_capacity(ctx_, array_schema, 0);
+  REQUIRE(rc == TILEDB_ERR);
+
+  // Clean up
+  tiledb_array_schema_free(&array_schema);
+}
+
+TEST_CASE_METHOD(
+    ArraySchemaFx,
+    "C API: Test array schema with invalid cell/tile order",
+    "[capi][array-schema]") {
+  // Create array schema
+  tiledb_array_schema_t* array_schema;
+  int rc = tiledb_array_schema_alloc(ctx_, TILEDB_SPARSE, &array_schema);
+  REQUIRE(rc == TILEDB_OK);
+
+  // Check that UNORDERED order fails
+  rc = tiledb_array_schema_set_tile_order(ctx_, array_schema, TILEDB_UNORDERED);
+  REQUIRE(rc == TILEDB_ERR);
+
+  rc = tiledb_array_schema_set_cell_order(ctx_, array_schema, TILEDB_UNORDERED);
+  REQUIRE(rc == TILEDB_ERR);
+
+  // Clean up
   tiledb_array_schema_free(&array_schema);
 }
 
@@ -1188,14 +1224,14 @@ TEST_CASE_METHOD(
   const void* extent = NULL;
   rc = tiledb_dimension_get_tile_extent(ctx_, r_d1, &extent);
   REQUIRE(rc == TILEDB_OK);
-  REQUIRE(extent != NULL);
+  REQUIRE(extent != nullptr);
   CHECK(*(const int32_t*)extent == 100);
   tiledb_dimension_t* r_d2;
   rc = tiledb_domain_get_dimension_from_index(ctx_, r_domain, 1, &r_d2);
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_dimension_get_tile_extent(ctx_, r_d2, &extent);
   REQUIRE(rc == TILEDB_OK);
-  REQUIRE(extent != NULL);
+  REQUIRE(extent != nullptr);
   CHECK(*(const float*)extent == d2_dom[1] - d2_dom[0]);
 
   // Clean up
@@ -1276,6 +1312,9 @@ TEST_CASE_METHOD(
   rc = tiledb_array_schema_set_offsets_filter_list(
       ctx_, array_schema, filter_list);
   REQUIRE(rc == TILEDB_OK);
+  rc = tiledb_array_schema_set_validity_filter_list(
+      ctx_, array_schema, filter_list);
+  REQUIRE(rc == TILEDB_OK);
 
   // Check for invalid array schema
   rc = tiledb_array_schema_check(ctx_, array_schema);
@@ -1310,12 +1349,15 @@ TEST_CASE_METHOD(
   REQUIRE(rc == TILEDB_OK);
 
   // Get filter lists
-  tiledb_filter_list_t *coords_flist, *offsets_flist;
+  tiledb_filter_list_t *coords_flist, *offsets_flist, *validity_flist;
   rc = tiledb_array_schema_get_coords_filter_list(
       ctx_, read_schema, &coords_flist);
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_array_schema_get_offsets_filter_list(
       ctx_, read_schema, &offsets_flist);
+  REQUIRE(rc == TILEDB_OK);
+  rc = tiledb_array_schema_get_validity_filter_list(
+      ctx_, read_schema, &validity_flist);
   REQUIRE(rc == TILEDB_OK);
 
   unsigned nfilters;
@@ -1323,6 +1365,9 @@ TEST_CASE_METHOD(
   REQUIRE(rc == TILEDB_OK);
   REQUIRE(nfilters == 1);
   rc = tiledb_filter_list_get_nfilters(ctx_, offsets_flist, &nfilters);
+  REQUIRE(rc == TILEDB_OK);
+  REQUIRE(nfilters == 1);
+  rc = tiledb_filter_list_get_nfilters(ctx_, validity_flist, &nfilters);
   REQUIRE(rc == TILEDB_OK);
   REQUIRE(nfilters == 1);
 
@@ -1349,6 +1394,7 @@ TEST_CASE_METHOD(
   tiledb_filter_free(&read_filter);
   tiledb_filter_list_free(&coords_flist);
   tiledb_filter_list_free(&offsets_flist);
+  tiledb_filter_list_free(&validity_flist);
   tiledb_array_schema_free(&read_schema);
   tiledb_array_free(&array);
   delete_array(array_name);
@@ -1425,7 +1471,7 @@ TEST_CASE_METHOD(
 
   // Corrupt the array schema
   std::string schema_path =
-      array_name + "/" + tiledb::sm::constants::array_schema_folder_name;
+      array_name + "/" + tiledb::sm::constants::array_schema_dir_name;
   std::string to_write = "garbage";
   tiledb_vfs_fh_t* fh;
   schema_file_struct data_struct = {ctx_, vfs_, ""};
@@ -1598,6 +1644,76 @@ TEST_CASE_METHOD(
   rc = tiledb_array_schema_get_allows_dups(ctx_, array_schema, &allows_dups_r);
   CHECK(rc == TILEDB_OK);
   CHECK(allows_dups_r == 1);
+
+  // Clean up
+  tiledb_array_schema_free(&array_schema);
+  delete_array(array_name);
+  remove_temp_dir(local_fs.file_prefix() + local_fs.temp_dir());
+}
+
+TEST_CASE_METHOD(
+    ArraySchemaFx,
+    "C API: Test array schema setter/getter for version",
+    "[capi][array-schema][version]") {
+  SECTION("- No serialization") {
+    serialize_array_schema_ = false;
+  }
+  SECTION("- Serialization") {
+    serialize_array_schema_ = true;
+  }
+
+  // Create and allocate array schema
+  tiledb_array_schema_t* array_schema;
+  int rc = tiledb_array_schema_alloc(ctx_, TILEDB_SPARSE, &array_schema);
+  REQUIRE(rc == TILEDB_OK);
+
+  // Create dimension
+  tiledb_dimension_t* d;
+  rc = tiledb_dimension_alloc(
+      ctx_, "d", TILEDB_INT64, &DIM_DOMAIN[0], &TILE_EXTENTS[0], &d);
+  REQUIRE(rc == TILEDB_OK);
+
+  // Set domain
+  tiledb_domain_t* domain;
+  rc = tiledb_domain_alloc(ctx_, &domain);
+  REQUIRE(rc == TILEDB_OK);
+  rc = tiledb_domain_add_dimension(ctx_, domain, d);
+  REQUIRE(rc == TILEDB_OK);
+  rc = tiledb_array_schema_set_domain(ctx_, array_schema, domain);
+  REQUIRE(rc == TILEDB_OK);
+
+  // Set attribute
+  tiledb_attribute_t* a;
+  rc = tiledb_attribute_alloc(ctx_, "a", ATTR_TYPE, &a);
+  REQUIRE(rc == TILEDB_OK);
+  rc = tiledb_array_schema_add_attribute(ctx_, array_schema, a);
+  REQUIRE(rc == TILEDB_OK);
+
+  // Instantiate local class
+  SupportedFsLocal local_fs;
+
+  // Create array
+  std::string array_name =
+      local_fs.file_prefix() + local_fs.temp_dir() + "duplicates";
+  create_temp_dir(local_fs.file_prefix() + local_fs.temp_dir());
+  rc = array_create_wrapper(array_name, array_schema);
+  REQUIRE(rc == TILEDB_OK);
+
+  // Clean up
+  tiledb_attribute_free(&a);
+  tiledb_dimension_free(&d);
+  tiledb_domain_free(&domain);
+  tiledb_array_schema_free(&array_schema);
+
+  // Load array schema
+  rc = array_schema_load_wrapper(array_name.c_str(), &array_schema);
+  REQUIRE(rc == TILEDB_OK);
+
+  // Get version.
+  uint32_t version_r = 0;
+  rc = tiledb_array_schema_get_version(ctx_, array_schema, &version_r);
+  CHECK(rc == TILEDB_OK);
+  CHECK(version_r == tiledb::sm::constants::format_version);
 
   // Clean up
   tiledb_array_schema_free(&array_schema);
@@ -1890,35 +2006,39 @@ TEST_CASE_METHOD(
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_array_open(ctx_, array, TILEDB_READ);
   REQUIRE(rc == TILEDB_OK);
-  void* dom = nullptr;
+  uint32_t dom[4];
   int is_empty = false;
-  rc = tiledb_array_get_non_empty_domain_wrapper(ctx_, array, dom, &is_empty);
+  rc = tiledb_array_get_non_empty_domain_wrapper(ctx_, array, &dom, &is_empty);
   REQUIRE(rc == TILEDB_ERR);
-  void* subarray = nullptr;
+  void* sub = nullptr;
 
   // Get non-empty domain per dimension
-  dom = nullptr;
   is_empty = false;
   rc = tiledb_array_get_non_empty_domain_from_index_wrapper(
-      ctx_, array, 0, dom, &is_empty);
+      ctx_, array, 0, &dom, &is_empty);
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_array_get_non_empty_domain_from_index_wrapper(
-      ctx_, array, 1, dom, &is_empty);
+      ctx_, array, 1, &dom, &is_empty);
   REQUIRE(rc == TILEDB_OK);
 
   rc = tiledb_array_get_non_empty_domain_from_name_wrapper(
-      ctx_, array, "d1", dom, &is_empty);
+      ctx_, array, "d1", &dom, &is_empty);
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_array_get_non_empty_domain_from_name_wrapper(
-      ctx_, array, "d2", dom, &is_empty);
+      ctx_, array, "d2", &dom, &is_empty);
   REQUIRE(rc == TILEDB_OK);
+
+  // Subarray checks
+  tiledb_subarray_t* subarray;
+  rc = tiledb_subarray_alloc(ctx_, array, &subarray);
+  CHECK(rc == TILEDB_OK);
+  rc = tiledb_subarray_set_subarray(ctx_, subarray, sub);
+  REQUIRE(rc == TILEDB_ERR);
 
   // Query checks
   tiledb_query_t* query;
   rc = tiledb_query_alloc(ctx_, array, TILEDB_READ, &query);
   REQUIRE(rc == TILEDB_OK);
-  rc = tiledb_query_set_subarray(ctx_, query, subarray);
-  REQUIRE(rc == TILEDB_ERR);
   void* buff = nullptr;
   uint64_t size = 1024;
   rc = tiledb_query_set_data_buffer(ctx_, query, "buff", buff, &size);
@@ -1937,6 +2057,7 @@ TEST_CASE_METHOD(
   tiledb_domain_free(&read_dom);
   tiledb_array_free(&array);
   tiledb_query_free(&query);
+  tiledb_subarray_free(&subarray);
   tiledb_array_schema_free(&array_schema);
   remove_temp_dir(local_fs.file_prefix() + local_fs.temp_dir());
 }
@@ -2029,6 +2150,12 @@ TEST_CASE_METHOD(
       ctx_, array_schema_evolution, "a3");
   REQUIRE(rc == TILEDB_OK);
 
+  // Set timestamp to avoid race condition
+  uint64_t now = tiledb_timestamp_now_ms();
+  now = now + 1;
+  rc = tiledb_array_schema_evolution_set_timestamp_range(
+      ctx_, array_schema_evolution, now, now);
+
   // Evolve schema
   rc = tiledb_array_evolve_wrapper(
       ctx_, array_name.c_str(), array_schema_evolution);
@@ -2040,6 +2167,8 @@ TEST_CASE_METHOD(
   // Open array
   tiledb_array_t* array;
   rc = tiledb_array_alloc(ctx_, array_name.c_str(), &array);
+  REQUIRE(rc == TILEDB_OK);
+  rc = tiledb_array_set_open_timestamp_end(ctx_, array, now + 1);
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_array_open(ctx_, array, TILEDB_READ);
   REQUIRE(rc == TILEDB_OK);
@@ -2059,7 +2188,7 @@ TEST_CASE_METHOD(
   const char* attr_name;
   rc = tiledb_attribute_get_name(ctx_, read_attr, &attr_name);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(attr_name, Catch::Equals("a2"));
+  CHECK_THAT(attr_name, Catch::Matchers::Equals("a2"));
 
   // Close array
   rc = tiledb_array_close(ctx_, array);
@@ -2165,6 +2294,12 @@ TEST_CASE_METHOD(
       ctx_, array_schema_evolution, "a1");
   REQUIRE(rc == TILEDB_OK);
 
+  // Set timestamp to avoid race condition
+  uint64_t now = tiledb_timestamp_now_ms();
+  now = now + 1;
+  rc = tiledb_array_schema_evolution_set_timestamp_range(
+      ctx_, array_schema_evolution, now, now);
+
   // Evolve schema
   rc = tiledb_array_evolve_wrapper(
       ctx_, array_name.c_str(), array_schema_evolution);
@@ -2177,6 +2312,8 @@ TEST_CASE_METHOD(
   // Open array
   tiledb_array_t* array;
   rc = tiledb_array_alloc(ctx_, array_name.c_str(), &array);
+  REQUIRE(rc == TILEDB_OK);
+  rc = tiledb_array_set_open_timestamp_end(ctx_, array, now + 1);
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_array_open(ctx_, array, TILEDB_READ);
   REQUIRE(rc == TILEDB_OK);
@@ -2196,7 +2333,7 @@ TEST_CASE_METHOD(
   const char* attr_name;
   rc = tiledb_attribute_get_name(ctx_, read_attr, &attr_name);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(attr_name, Catch::Equals("a2"));
+  CHECK_THAT(attr_name, Catch::Matchers::Equals("a2"));
 
   tiledb_attribute_t* read_attr1;
   rc = tiledb_array_schema_get_attribute_from_index(
@@ -2205,7 +2342,7 @@ TEST_CASE_METHOD(
   const char* attr_name1;
   rc = tiledb_attribute_get_name(ctx_, read_attr1, &attr_name1);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(attr_name1, Catch::Equals("a3"));
+  CHECK_THAT(attr_name1, Catch::Matchers::Equals("a3"));
 
   // Close array
   rc = tiledb_array_close(ctx_, array);
@@ -2231,7 +2368,7 @@ TEST_CASE_METHOD(
   std::string array_uri(arrays_dir + "/non_split_coords_v1_4_0");
   // Remove any failed tests
   remove_temp_dir(
-      array_uri + "/" + tiledb::sm::constants::array_schema_folder_name);
+      array_uri + "/" + tiledb::sm::constants::array_schema_dir_name);
 
   // Create an array schema evolution
   tiledb_array_schema_evolution_t* array_schema_evolution;
@@ -2251,6 +2388,12 @@ TEST_CASE_METHOD(
       ctx_, array_schema_evolution, "a");
   REQUIRE(rc == TILEDB_OK);
 
+  // Set timestamp to avoid race condition
+  uint64_t now = tiledb_timestamp_now_ms();
+  now = now + 1;
+  rc = tiledb_array_schema_evolution_set_timestamp_range(
+      ctx_, array_schema_evolution, now, now);
+
   // Evolve schema
   rc = tiledb_array_evolve_wrapper(
       ctx_, array_uri.c_str(), array_schema_evolution);
@@ -2263,6 +2406,8 @@ TEST_CASE_METHOD(
   // Open array
   tiledb_array_t* array;
   rc = tiledb_array_alloc(ctx_, array_uri.c_str(), &array);
+  REQUIRE(rc == TILEDB_OK);
+  rc = tiledb_array_set_open_timestamp_end(ctx_, array, now + 1);
   REQUIRE(rc == TILEDB_OK);
   rc = tiledb_array_open(ctx_, array, TILEDB_READ);
   REQUIRE(rc == TILEDB_OK);
@@ -2282,7 +2427,7 @@ TEST_CASE_METHOD(
   const char* attr_name;
   rc = tiledb_attribute_get_name(ctx_, read_attr, &attr_name);
   REQUIRE(rc == TILEDB_OK);
-  CHECK_THAT(attr_name, Catch::Equals("a2"));
+  CHECK_THAT(attr_name, Catch::Matchers::Equals("a2"));
 
   // Close array
   rc = tiledb_array_close(ctx_, array);
@@ -2294,5 +2439,335 @@ TEST_CASE_METHOD(
   tiledb_array_free(&array);
   remove_temp_dir(local_fs.file_prefix() + local_fs.temp_dir());
   remove_temp_dir(
-      array_uri + "/" + tiledb::sm::constants::array_schema_folder_name);
+      array_uri + "/" + tiledb::sm::constants::array_schema_dir_name);
+}
+
+TEST_CASE_METHOD(
+    ArraySchemaFx,
+    "C API: Test CurrentDomain schema APIs",
+    "[capi][array-schema][current_domain][args]") {
+  tiledb_current_domain_t* crd = nullptr;
+  REQUIRE(tiledb_current_domain_create(ctx_, &crd) == TILEDB_OK);
+
+  CHECK(
+      tiledb_array_schema_set_current_domain(nullptr, nullptr, nullptr) ==
+      TILEDB_INVALID_CONTEXT);
+  CHECK(
+      tiledb_array_schema_set_current_domain(ctx_, nullptr, nullptr) ==
+      TILEDB_ERR);
+  tiledb_array_schema_t* array_schema = nullptr;
+  REQUIRE(
+      tiledb_array_schema_alloc(ctx_, TILEDB_SPARSE, &array_schema) ==
+      TILEDB_OK);
+  CHECK(
+      tiledb_array_schema_set_current_domain(ctx_, array_schema, nullptr) ==
+      TILEDB_ERR);
+
+  CHECK(
+      tiledb_array_schema_get_current_domain(nullptr, nullptr, nullptr) ==
+      TILEDB_INVALID_CONTEXT);
+  CHECK(
+      tiledb_array_schema_get_current_domain(ctx_, nullptr, nullptr) ==
+      TILEDB_ERR);
+  CHECK(
+      tiledb_array_schema_get_current_domain(ctx_, array_schema, nullptr) ==
+      TILEDB_ERR);
+
+  CHECK(
+      tiledb_array_schema_evolution_expand_current_domain(
+          nullptr, nullptr, nullptr) == TILEDB_INVALID_CONTEXT);
+  CHECK(
+      tiledb_array_schema_evolution_expand_current_domain(
+          ctx_, nullptr, nullptr) == TILEDB_ERR);
+  tiledb_array_schema_evolution_t* evo;
+  REQUIRE(tiledb_array_schema_evolution_alloc(ctx_, &evo) == TILEDB_OK);
+  CHECK(
+      tiledb_array_schema_evolution_expand_current_domain(ctx_, evo, nullptr) ==
+      TILEDB_ERR);
+
+  tiledb_array_schema_evolution_free(&evo);
+  tiledb_array_schema_free(&array_schema);
+  REQUIRE(tiledb_current_domain_free(&crd) == TILEDB_OK);
+}
+
+TEST_CASE_METHOD(
+    ArraySchemaFx,
+    "C API: Test CurrentDomain schema APIs",
+    "[capi][array-schema][current_domain][get_set]") {
+  tiledb_array_schema_t* schema;
+  REQUIRE(tiledb_array_schema_alloc(ctx_, TILEDB_SPARSE, &schema) == TILEDB_OK);
+
+  tiledb_current_domain_t* crd = nullptr;
+  REQUIRE(
+      tiledb_array_schema_get_current_domain(ctx_, schema, &crd) == TILEDB_OK);
+
+  uint32_t is_empty = 0;
+  REQUIRE(
+      tiledb_current_domain_get_is_empty(ctx_, crd, &is_empty) == TILEDB_OK);
+  CHECK(is_empty == 1);
+
+  REQUIRE(tiledb_current_domain_free(&crd) == TILEDB_OK);
+
+  tiledb_dimension_t* d1;
+  REQUIRE(
+      tiledb_dimension_alloc(
+          ctx_, "d1", TILEDB_INT64, &DIM_DOMAIN[0], &TILE_EXTENTS[0], &d1) ==
+      TILEDB_OK);
+
+  tiledb_domain_t* domain;
+  REQUIRE(tiledb_domain_alloc(ctx_, &domain) == TILEDB_OK);
+  REQUIRE(tiledb_domain_add_dimension(ctx_, domain, d1) == TILEDB_OK);
+  REQUIRE(tiledb_array_schema_set_domain(ctx_, schema, domain) == TILEDB_OK);
+
+  tiledb_attribute_t* attr1;
+  REQUIRE(
+      tiledb_attribute_alloc(ctx_, "a1", TILEDB_INT32, &attr1) == TILEDB_OK);
+  REQUIRE(tiledb_array_schema_add_attribute(ctx_, schema, attr1) == TILEDB_OK);
+
+  REQUIRE(
+      tiledb_array_schema_set_capacity(ctx_, schema, CAPACITY) == TILEDB_OK);
+  REQUIRE(
+      tiledb_array_schema_set_cell_order(ctx_, schema, CELL_ORDER) ==
+      TILEDB_OK);
+  REQUIRE(
+      tiledb_array_schema_set_tile_order(ctx_, schema, TILE_ORDER) ==
+      TILEDB_OK);
+
+  REQUIRE(tiledb_current_domain_create(ctx_, &crd) == TILEDB_OK);
+
+  tiledb_ndrectangle_t* ndr = nullptr;
+  REQUIRE(tiledb_ndrectangle_alloc(ctx_, domain, &ndr) == TILEDB_OK);
+  REQUIRE(tiledb_current_domain_set_ndrectangle(ctx_, crd, ndr) == TILEDB_OK);
+
+  REQUIRE(
+      tiledb_array_schema_set_current_domain(ctx_, schema, crd) == TILEDB_OK);
+
+  SupportedFsLocal local_fs;
+  std::string array_name =
+      local_fs.file_prefix() + local_fs.temp_dir() + ARRAY_NAME;
+  create_temp_dir(local_fs.file_prefix() + local_fs.temp_dir());
+
+  // No range was set on the ndrectangle, can't create array
+  CHECK(tiledb_array_create(ctx_, array_name.c_str(), schema) == TILEDB_ERR);
+
+  tiledb_error_t* err;
+  CHECK(tiledb_ctx_get_last_error(ctx_, &err) == TILEDB_OK);
+
+  const char* errmsg;
+  CHECK(tiledb_error_message(err, &errmsg) == TILEDB_OK);
+  CHECK_THAT(
+      errmsg,
+      Catch::Matchers::Equals("TileDB internal: This current domain has no "
+                              "range specified for dimension idx: 0"));
+
+  tiledb_range_t range;
+  int64_t min = 2;
+  int64_t max = 100;
+  range.min = &min;
+  range.min_size = sizeof(int64_t);
+  range.max = &max;
+  range.max_size = sizeof(int64_t);
+  REQUIRE(
+      tiledb_ndrectangle_set_range_for_name(ctx_, ndr, "d1", &range) ==
+      TILEDB_OK);
+
+  // Range is out of schema domain bounds
+  CHECK(tiledb_array_create(ctx_, array_name.c_str(), schema) == TILEDB_ERR);
+
+  CHECK(tiledb_ctx_get_last_error(ctx_, &err) == TILEDB_OK);
+
+  CHECK(tiledb_error_message(err, &errmsg) == TILEDB_OK);
+  CHECK_THAT(
+      errmsg,
+      Catch::Matchers::Equals(
+          "TileDB internal: This array current domain has ranges past the "
+          "boundaries of the array schema domain"));
+
+  max = 5;
+  REQUIRE(
+      tiledb_ndrectangle_set_range_for_name(ctx_, ndr, "d1", &range) ==
+      TILEDB_OK);
+  REQUIRE(tiledb_array_create(ctx_, array_name.c_str(), schema) == TILEDB_OK);
+
+  REQUIRE(tiledb_ndrectangle_free(&ndr) == TILEDB_OK);
+  REQUIRE(tiledb_current_domain_free(&crd) == TILEDB_OK);
+  tiledb_attribute_free(&attr1);
+  tiledb_dimension_free(&d1);
+  tiledb_domain_free(&domain);
+  tiledb_array_schema_free(&schema);
+
+  // Open array, read back current domain from schema and check
+  tiledb_array_t* array;
+  REQUIRE(tiledb_array_alloc(ctx_, array_name.c_str(), &array) == TILEDB_OK);
+  REQUIRE(tiledb_array_open(ctx_, array, TILEDB_READ) == TILEDB_OK);
+  REQUIRE(tiledb_array_get_schema(ctx_, array, &schema) == TILEDB_OK);
+  REQUIRE(
+      tiledb_array_schema_get_current_domain(ctx_, schema, &crd) == TILEDB_OK);
+
+  REQUIRE(tiledb_current_domain_get_ndrectangle(ctx_, crd, &ndr) == TILEDB_OK);
+  tiledb_range_t outrange;
+  REQUIRE(
+      tiledb_ndrectangle_get_range_from_name(ctx_, ndr, "d1", &outrange) ==
+      TILEDB_OK);
+  CHECK(*(int64_t*)outrange.min == min);
+  CHECK(*(int64_t*)outrange.max == max);
+  CHECK(outrange.min_size == range.min_size);
+  CHECK(outrange.max_size == range.max_size);
+
+  REQUIRE(tiledb_ndrectangle_free(&ndr) == TILEDB_OK);
+  REQUIRE(tiledb_current_domain_free(&crd) == TILEDB_OK);
+  tiledb_array_schema_free(&schema);
+  REQUIRE(tiledb_array_close(ctx_, array) == TILEDB_OK);
+  tiledb_array_free(&array);
+
+  delete_array(array_name);
+  remove_temp_dir(local_fs.file_prefix() + local_fs.temp_dir());
+}
+
+TEST_CASE_METHOD(
+    ArraySchemaFx,
+    "C API: Test CurrentDomain schema APIs",
+    "[capi][array-schema][current_domain][evolution]") {
+  tiledb_array_schema_t* schema;
+  REQUIRE(tiledb_array_schema_alloc(ctx_, TILEDB_SPARSE, &schema) == TILEDB_OK);
+
+  tiledb_dimension_t* d1;
+  REQUIRE(
+      tiledb_dimension_alloc(
+          ctx_, "d1", TILEDB_INT64, &DIM_DOMAIN[0], &TILE_EXTENTS[0], &d1) ==
+      TILEDB_OK);
+
+  tiledb_domain_t* domain;
+  REQUIRE(tiledb_domain_alloc(ctx_, &domain) == TILEDB_OK);
+  REQUIRE(tiledb_domain_add_dimension(ctx_, domain, d1) == TILEDB_OK);
+  REQUIRE(tiledb_array_schema_set_domain(ctx_, schema, domain) == TILEDB_OK);
+
+  tiledb_attribute_t* attr1;
+  REQUIRE(
+      tiledb_attribute_alloc(ctx_, "a1", TILEDB_INT32, &attr1) == TILEDB_OK);
+  REQUIRE(tiledb_array_schema_add_attribute(ctx_, schema, attr1) == TILEDB_OK);
+
+  REQUIRE(
+      tiledb_array_schema_set_capacity(ctx_, schema, CAPACITY) == TILEDB_OK);
+  REQUIRE(
+      tiledb_array_schema_set_cell_order(ctx_, schema, CELL_ORDER) ==
+      TILEDB_OK);
+  REQUIRE(
+      tiledb_array_schema_set_tile_order(ctx_, schema, TILE_ORDER) ==
+      TILEDB_OK);
+
+  tiledb_current_domain_t* crd = nullptr;
+  REQUIRE(tiledb_current_domain_create(ctx_, &crd) == TILEDB_OK);
+
+  tiledb_ndrectangle_t* ndr = nullptr;
+  REQUIRE(tiledb_ndrectangle_alloc(ctx_, domain, &ndr) == TILEDB_OK);
+
+  tiledb_range_t range;
+  int64_t min = 2;
+  int64_t max = 5;
+  range.min = &min;
+  range.min_size = sizeof(int64_t);
+  range.max = &max;
+  range.max_size = sizeof(int64_t);
+  REQUIRE(
+      tiledb_ndrectangle_set_range_for_name(ctx_, ndr, "d1", &range) ==
+      TILEDB_OK);
+  REQUIRE(tiledb_current_domain_set_ndrectangle(ctx_, crd, ndr) == TILEDB_OK);
+  REQUIRE(
+      tiledb_array_schema_set_current_domain(ctx_, schema, crd) == TILEDB_OK);
+
+  SupportedFsLocal local_fs;
+  std::string array_name =
+      local_fs.file_prefix() + local_fs.temp_dir() + ARRAY_NAME;
+  create_temp_dir(local_fs.file_prefix() + local_fs.temp_dir());
+
+  REQUIRE(tiledb_array_create(ctx_, array_name.c_str(), schema) == TILEDB_OK);
+
+  REQUIRE(tiledb_ndrectangle_free(&ndr) == TILEDB_OK);
+  REQUIRE(tiledb_current_domain_free(&crd) == TILEDB_OK);
+
+  // Evolve the schema
+  tiledb_array_schema_evolution_t* evo;
+  REQUIRE(tiledb_array_schema_evolution_alloc(ctx_, &evo) == TILEDB_OK);
+
+  // Expansion with empty domain is an error
+  REQUIRE(tiledb_current_domain_create(ctx_, &crd) == TILEDB_OK);
+  CHECK(
+      tiledb_array_schema_evolution_expand_current_domain(ctx_, evo, crd) ==
+      TILEDB_ERR);
+
+  tiledb_error_t* err;
+  CHECK(tiledb_ctx_get_last_error(ctx_, &err) == TILEDB_OK);
+
+  const char* errmsg;
+  CHECK(tiledb_error_message(err, &errmsg) == TILEDB_OK);
+  CHECK_THAT(
+      errmsg,
+      Catch::Matchers::Equals(
+          "ArraySchemaEvolution: Unable to expand the array current domain, "
+          "the new current domain specified is empty"));
+
+  REQUIRE(tiledb_ndrectangle_alloc(ctx_, domain, &ndr) == TILEDB_OK);
+  max = 3;
+  REQUIRE(
+      tiledb_ndrectangle_set_range_for_name(ctx_, ndr, "d1", &range) ==
+      TILEDB_OK);
+  REQUIRE(tiledb_current_domain_set_ndrectangle(ctx_, crd, ndr) == TILEDB_OK);
+
+  REQUIRE(
+      tiledb_array_schema_evolution_expand_current_domain(ctx_, evo, crd) ==
+      TILEDB_OK);
+
+  // The shape is smaller here so it should fail.
+  CHECK(tiledb_array_evolve(ctx_, array_name.c_str(), evo) == TILEDB_ERR);
+
+  CHECK(tiledb_ctx_get_last_error(ctx_, &err) == TILEDB_OK);
+
+  CHECK(tiledb_error_message(err, &errmsg) == TILEDB_OK);
+  CHECK_THAT(
+      errmsg,
+      Catch::Matchers::Equals(
+          "ArraySchema: The current domain of an array can only be expanded, "
+          "please adjust your new current domain object."));
+
+  max = 7;
+  REQUIRE(
+      tiledb_ndrectangle_set_range_for_name(ctx_, ndr, "d1", &range) ==
+      TILEDB_OK);
+  REQUIRE(tiledb_array_evolve(ctx_, array_name.c_str(), evo) == TILEDB_OK);
+
+  REQUIRE(tiledb_ndrectangle_free(&ndr) == TILEDB_OK);
+  REQUIRE(tiledb_current_domain_free(&crd) == TILEDB_OK);
+  tiledb_array_schema_evolution_free(&evo);
+  tiledb_attribute_free(&attr1);
+  tiledb_dimension_free(&d1);
+  tiledb_domain_free(&domain);
+  tiledb_array_schema_free(&schema);
+
+  // Open array, read back current domain from schema and check
+  tiledb_array_t* array;
+  REQUIRE(tiledb_array_alloc(ctx_, array_name.c_str(), &array) == TILEDB_OK);
+  REQUIRE(tiledb_array_open(ctx_, array, TILEDB_READ) == TILEDB_OK);
+  REQUIRE(tiledb_array_get_schema(ctx_, array, &schema) == TILEDB_OK);
+  REQUIRE(
+      tiledb_array_schema_get_current_domain(ctx_, schema, &crd) == TILEDB_OK);
+
+  REQUIRE(tiledb_current_domain_get_ndrectangle(ctx_, crd, &ndr) == TILEDB_OK);
+  tiledb_range_t outrange;
+  REQUIRE(
+      tiledb_ndrectangle_get_range_from_name(ctx_, ndr, "d1", &outrange) ==
+      TILEDB_OK);
+  CHECK(*(int64_t*)outrange.min == min);
+  CHECK(*(int64_t*)outrange.max == max);
+  CHECK(outrange.min_size == range.min_size);
+  CHECK(outrange.max_size == range.max_size);
+
+  REQUIRE(tiledb_ndrectangle_free(&ndr) == TILEDB_OK);
+  REQUIRE(tiledb_current_domain_free(&crd) == TILEDB_OK);
+  tiledb_array_schema_free(&schema);
+  REQUIRE(tiledb_array_close(ctx_, array) == TILEDB_OK);
+  tiledb_array_free(&array);
+
+  delete_array(array_name);
+  remove_temp_dir(local_fs.file_prefix() + local_fs.temp_dir());
 }

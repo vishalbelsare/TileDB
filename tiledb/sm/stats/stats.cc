@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2021 TileDB, Inc.
+ * @copyright Copyright (c) 2021-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,25 +31,28 @@
  */
 
 #include "tiledb/sm/stats/stats.h"
-#include "tiledb/sm/misc/utils.h"
+#include "tiledb/common/stdx_string.h"
 
 #include <algorithm>
 #include <cassert>
 #include <sstream>
 #include <vector>
 
-namespace tiledb {
-namespace sm {
-namespace stats {
+namespace tiledb::sm::stats {
 
 /* ****************************** */
 /*   CONSTRUCTORS & DESTRUCTORS   */
 /* ****************************** */
 
 Stats::Stats(const std::string& prefix)
+    : Stats(prefix, StatsData{}) {
+}
+
+Stats::Stats(const std::string& prefix, const StatsData& data)
     : enabled_(true)
     , prefix_(prefix + ".")
     , parent_(nullptr) {
+  this->populate_with_data(data);
 }
 
 /* ****************************** */
@@ -172,8 +175,9 @@ std::string Stats::dump(
 #ifdef TILEDB_STATS
 
 void Stats::add_counter(const std::string& stat, uint64_t count) {
-  if (!enabled_)
+  if (!enabled_) {
     return;
+  }
 
   std::string new_stat = prefix_ + stat;
   std::unique_lock<std::mutex> lck(mtx_);
@@ -185,35 +189,18 @@ void Stats::add_counter(const std::string& stat, uint64_t count) {
   }
 }
 
-ScopedExecutor Stats::start_timer(const std::string& stat) {
-  if (!enabled_)
-    return ScopedExecutor();
-
-  std::string new_stat = prefix_ + stat;
-  std::unique_lock<std::mutex> lck(mtx_);
-  const std::thread::id tid = std::this_thread::get_id();
-  start_times_[new_stat][tid] = std::chrono::high_resolution_clock::now();
-
-  std::function<void()> end_timer_fn = std::bind(&Stats::end_timer, this, stat);
-  return ScopedExecutor(std::move(end_timer_fn));
+DurationInstrument<Stats> Stats::start_timer(const std::string& stat) {
+  return DurationInstrument<Stats>(*this, stat);
 }
 
-void Stats::end_timer(const std::string& stat) {
-  if (!enabled_)
+void Stats::report_duration(
+    const std::string& stat, const std::chrono::duration<double> duration) {
+  if (!enabled_) {
     return;
+  }
 
   std::string new_stat = prefix_ + stat;
   std::unique_lock<std::mutex> lck(mtx_);
-
-  // Calculate duration
-  const std::thread::id tid = std::this_thread::get_id();
-  auto it = start_times_.find(new_stat);
-  assert(it != start_times_.end());
-  auto tit = it->second.find(tid);
-  assert(tit != it->second.end());
-  auto start_time = tit->second;
-  auto end_time = std::chrono::high_resolution_clock::now();
-  const std::chrono::duration<double> duration = end_time - start_time;
 
   // Add duration to timer total
   auto it2 = timers_.find(new_stat + ".sum");
@@ -243,17 +230,15 @@ void Stats::end_timer(const std::string& stat) {
 
 #else
 
-void Stats::add_counter(const std::string& stat, uint64_t count) {
-  (void)stat;
-  (void)count;
-}
-ScopedExecutor Stats::start_timer(const std::string& stat) {
-  (void)stat;
-  return ScopedExecutor();
+void Stats::add_counter(const std::string&, uint64_t) {
 }
 
-void Stats::end_timer(const std::string& stat) {
-  (void)stat;
+int Stats::start_timer(const std::string&) {
+  return 0;
+}
+
+void Stats::report_duration(
+    const std::string&, const std::chrono::duration<double>) {
 }
 
 #endif
@@ -263,8 +248,12 @@ Stats* Stats::parent() {
 }
 
 Stats* Stats::create_child(const std::string& prefix) {
+  return create_child(prefix, StatsData{});
+}
+
+Stats* Stats::create_child(const std::string& prefix, const StatsData& data) {
   std::unique_lock<std::mutex> lck(mtx_);
-  children_.emplace_back(prefix_ + prefix);
+  children_.emplace_back(prefix_ + prefix, data);
   Stats* const child = &children_.back();
   child->parent_ = this;
   return child;
@@ -289,15 +278,24 @@ void Stats::populate_flattened_stats(
   }
 }
 
-std::unordered_map<std::string, double>* Stats::timers() {
+const std::unordered_map<std::string, double>* Stats::timers() const {
   return &timers_;
 }
 
 /** Return pointer to conters map, used for serialization only. */
-std::unordered_map<std::string, uint64_t>* Stats::counters() {
+const std::unordered_map<std::string, uint64_t>* Stats::counters() const {
   return &counters_;
 }
 
-}  // namespace stats
-}  // namespace sm
-}  // namespace tiledb
+void Stats::populate_with_data(const StatsData& data) {
+  auto& timers = data.timers();
+  for (const auto& timer : timers) {
+    timers_[timer.first] = timer.second;
+  }
+  auto& counters = data.counters();
+  for (const auto& counter : counters) {
+    counters_[counter.first] = counter.second;
+  }
+}
+
+}  // namespace tiledb::sm::stats

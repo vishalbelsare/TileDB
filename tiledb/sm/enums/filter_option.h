@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,17 +35,27 @@
 #define TILEDB_FILTER_OPTION_H
 
 #include <cassert>
-#include "tiledb/common/status.h"
+#include "tiledb/common/exception/exception.h"
 #include "tiledb/sm/misc/constants.h"
+
+using namespace tiledb::common;
 
 namespace tiledb {
 namespace sm {
 
+using namespace tiledb::common;
+
 /** Defines the filter type. */
 enum class FilterOption : uint8_t {
 #define TILEDB_FILTER_OPTION_ENUM(id) id
-#include "tiledb/sm/c_api/tiledb_enum.h"
+#include "tiledb/api/c_api/filter/filter_api_enum.h"
 #undef TILEDB_FILTER_OPTION_ENUM
+};
+
+enum class WebpInputFormat : uint8_t {
+#define TILEDB_FILTER_WEBP_FORMAT(id) id
+#include "tiledb/api/c_api/filter/filter_api_enum.h"
+#undef TILEDB_FILTER_WEBP_FORMAT
 };
 
 /** Returns the string representation of the input FilterOption type. */
@@ -57,6 +67,20 @@ inline const std::string& filter_option_str(FilterOption filter_option_) {
       return constants::filter_option_bit_width_max_window_str;
     case FilterOption::POSITIVE_DELTA_MAX_WINDOW:
       return constants::filter_option_positive_delta_max_window_str;
+    case FilterOption::SCALE_FLOAT_BYTEWIDTH:
+      return constants::filter_option_scale_float_bytewidth;
+    case FilterOption::SCALE_FLOAT_FACTOR:
+      return constants::filter_option_scale_float_factor;
+    case FilterOption::SCALE_FLOAT_OFFSET:
+      return constants::filter_option_scale_float_offset;
+    case FilterOption::WEBP_QUALITY:
+      return constants::filter_option_webp_quality;
+    case FilterOption::WEBP_INPUT_FORMAT:
+      return constants::filter_option_webp_input_format;
+    case FilterOption::WEBP_LOSSLESS:
+      return constants::filter_option_webp_lossless;
+    case FilterOption::COMPRESSION_REINTERPRET_DATATYPE:
+      return constants::filter_option_compression_reinterpret_datatype;
     default:
       return constants::empty_str;
   }
@@ -74,8 +98,24 @@ inline Status filter_option_enum(
       filter_option_str ==
       constants::filter_option_positive_delta_max_window_str)
     *filter_option_ = FilterOption::POSITIVE_DELTA_MAX_WINDOW;
+  else if (filter_option_str == constants::filter_option_scale_float_bytewidth)
+    *filter_option_ = FilterOption::SCALE_FLOAT_BYTEWIDTH;
+  else if (filter_option_str == constants::filter_option_scale_float_factor)
+    *filter_option_ = FilterOption::SCALE_FLOAT_FACTOR;
+  else if (filter_option_str == constants::filter_option_scale_float_offset)
+    *filter_option_ = FilterOption::SCALE_FLOAT_OFFSET;
+  else if (filter_option_str == constants::filter_option_webp_quality)
+    *filter_option_ = FilterOption::WEBP_QUALITY;
+  else if (filter_option_str == constants::filter_option_webp_input_format)
+    *filter_option_ = FilterOption::WEBP_INPUT_FORMAT;
+  else if (filter_option_str == constants::filter_option_webp_lossless)
+    *filter_option_ = FilterOption::WEBP_LOSSLESS;
+  else if (
+      filter_option_str ==
+      constants::filter_option_compression_reinterpret_datatype)
+    *filter_option_ = FilterOption::COMPRESSION_REINTERPRET_DATATYPE;
   else
-    return Status::Error("Invalid FilterOption " + filter_option_str);
+    return Status_Error("Invalid FilterOption " + filter_option_str);
 
   return Status::Ok();
 }

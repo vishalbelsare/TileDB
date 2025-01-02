@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,15 +36,37 @@
 #include <array>
 #include <cinttypes>
 #include <string>
+#include <vector>
 
-namespace tiledb {
-namespace sm {
+#include "tiledb/common/common.h"
 
+namespace tiledb::sm {
 enum class Datatype : uint8_t;
 enum class Compressor : uint8_t;
 enum class SerializationType : uint8_t;
 
 namespace constants {
+
+// The following aggregate constants are declared static to avoid a SIOF
+// issue with constant aggregate operator handles with extern linkage.
+
+/** The name of COUNT aggregator. */
+static const std::string aggregate_count_str = "COUNT";
+
+/** The name of SUM aggregator. */
+static const std::string aggregate_sum_str = "SUM";
+
+/** The name of MIN aggregator. */
+static const std::string aggregate_min_str = "MIN";
+
+/** The name of MAX aggregator. */
+static const std::string aggregate_max_str = "MAX";
+
+/** The name of NULL_COUNT aggregator. */
+static const std::string aggregate_null_count_str = "NULL_COUNT";
+
+/** The name of MEAN aggregator. */
+static const std::string aggregate_mean_str = "MEAN";
 
 /**
  * Reduction factor (must be in [0.0, 1.0]) for the multi_range subarray
@@ -59,17 +81,32 @@ extern const double est_result_size_amplification;
 /** Default fanout for RTrees. */
 extern const unsigned rtree_fanout;
 
-/** The object filelock name. */
-extern const std::string filelock_name;
-
 /** The array schema file name. */
 extern const std::string array_schema_filename;
 
-/** The array schema folder name. */
-extern const std::string array_schema_folder_name;
+/** The array schema directory name. */
+extern const std::string array_schema_dir_name;
 
-/** The array metadata folder name. */
-extern const std::string array_metadata_folder_name;
+/** The array metadata directory name. */
+extern const std::string array_metadata_dir_name;
+
+/** The array fragment metadata directory name. */
+extern const std::string array_fragment_meta_dir_name;
+
+/** The array fragments directory name. */
+extern const std::string array_fragments_dir_name;
+
+/** The array commit directory name. */
+extern const std::string array_commits_dir_name;
+
+/** The array dimension labels directory name. */
+extern const std::string array_dimension_labels_dir_name;
+
+/** The array enumerations directory name. */
+extern const std::string array_enumerations_dir_name;
+
+/** The array directory names. */
+extern const std::vector<std::string> array_dir_names;
 
 /** The default tile capacity. */
 extern const uint64_t capacity;
@@ -113,6 +150,27 @@ extern int coords_compression_level;
 /** Special name reserved for the coordinates attribute. */
 extern const std::string coords;
 
+/** Special name reserved for the timestamp attribute. */
+extern const std::string timestamps;
+
+/** Special name reserved for the delete timestamp attribute. */
+extern const std::string delete_timestamps;
+
+/** Special name reserved for the delete condition index attribute. */
+extern const std::string delete_condition_index;
+
+/** Special name reserved for count or rows. */
+extern const std::string count_of_rows;
+
+/** The size of a timestamp cell. */
+extern const uint64_t timestamp_size;
+
+/** The type of a timestamp cell. */
+extern const Datatype timestamp_type;
+
+/** The type of a delete condition index cell. */
+extern const Datatype delete_condition_index_type;
+
 /** The special value for an empty int32. */
 extern const int empty_int32;
 
@@ -127,6 +185,9 @@ extern const double empty_float64;
 
 /** The special value for an empty char. */
 extern const char empty_char;
+
+/** The special value for an empty bool. */
+extern const uint8_t empty_bool;
 
 /** The special value for an empty int8. */
 extern const int8_t empty_int8;
@@ -167,6 +228,9 @@ extern const uint32_t empty_ucs4;
 /** The special value for an empty ANY. */
 extern const uint8_t empty_any;
 
+/** The return value for missing entries in an Enumeration */
+extern const uint64_t enumeration_missing_value;
+
 /** The file suffix used in TileDB. */
 extern const std::string file_suffix;
 
@@ -176,8 +240,23 @@ extern const std::string vacuum_file_suffix;
 /** Suffix for the special ok files used in TileDB. */
 extern const std::string ok_file_suffix;
 
+/** Suffix for the special write files used in TileDB. */
+extern const std::string write_file_suffix;
+
+/** Suffix for the special delete files used in TileDB. */
+extern const std::string delete_file_suffix;
+
+/** Suffix for the special update files used in TileDB. */
+extern const std::string update_file_suffix;
+
 /** Suffix for the special metadata files used in TileDB. */
 extern const std::string meta_file_suffix;
+
+/** Suffix for the special consolidated commits files used in TileDB. */
+extern const std::string con_commits_file_suffix;
+
+/** Suffix for the special ignore files used in TileDB. */
+extern const std::string ignore_file_suffix;
 
 /** The fragment metadata file name. */
 extern const std::string fragment_metadata_filename;
@@ -196,6 +275,15 @@ extern uint64_t generic_tile_cell_size;
 
 /** The group file name. */
 extern const std::string group_filename;
+
+/** The group details directory name. */
+extern const std::string group_detail_dir_name;
+
+/** The group metadata directory name. */
+extern const std::string group_metadata_dir_name;
+
+/** The group directory names. */
+extern const std::vector<std::string> group_dir_names;
 
 /** The maximum number of bytes written in a single I/O. */
 extern const uint64_t max_write_bytes;
@@ -218,6 +306,15 @@ extern const std::string query_type_read_str;
 /** TILEDB_WRITE Query String **/
 extern const std::string query_type_write_str;
 
+/** TILEDB_DELETE Query String **/
+extern const std::string query_type_delete_str;
+
+/** TILEDB_UPDATE Query String **/
+extern const std::string query_type_update_str;
+
+/** TILEDB_MODIFY_EXCLUSIVE Query String **/
+extern const std::string query_type_modify_exclusive_str;
+
 /** TILEDB_FAILED Query String **/
 extern const std::string query_status_failed_str;
 
@@ -230,8 +327,17 @@ extern const std::string query_status_inprogress_str;
 /** TILEDB_INCOMPLETE Query String **/
 extern const std::string query_status_incomplete_str;
 
+/** TILEDB_INITIALIZED Query String **/
+extern const std::string query_status_initialized_str;
+
 /** TILEDB_UNINITIALIZED Query String **/
 extern const std::string query_status_uninitialized_str;
+
+/** TILEDB_ALWAYS_TRUE Query Condition Op String **/
+extern const std::string query_condition_op_always_true_str;
+
+/** TILEDB_ALWAYS_FALSE Query Condition Op String **/
+extern const std::string query_condition_op_always_false_str;
 
 /** TILEDB_LT Query Condition Op String **/
 extern const std::string query_condition_op_lt_str;
@@ -250,6 +356,12 @@ extern const std::string query_condition_op_eq_str;
 
 /** TILEDB_NE Query Condition Op String **/
 extern const std::string query_condition_op_ne_str;
+
+/** TILEDB_IN Query Condition Op String **/
+extern const std::string query_condition_op_in_str;
+
+/** TILEDB_NOT_IN Query Condition Op String **/
+extern const std::string query_condition_op_not_in_str;
 
 /** TILEDB_AND Query Condition Combination Op String **/
 extern const std::string query_condition_combination_op_and_str;
@@ -293,6 +405,9 @@ extern const std::string bzip2_str;
 /** String describing DOUBLE_DELTA. */
 extern const std::string double_delta_str;
 
+/** String describing DELTA. */
+extern const std::string delta_str;
+
 /** String describing FILTER_NONE. */
 extern const std::string filter_none_str;
 
@@ -314,6 +429,18 @@ extern const std::string filter_checksum_md5_str;
 /** String describing FILTER_CHECKSUM_SHA256. */
 extern const std::string filter_checksum_sha256_str;
 
+/** String describing FILTER_DICTIONARY. */
+extern const std::string filter_dictionary_str;
+
+/** String describing FILTER_SCALE_FLOAT. */
+extern const std::string filter_scale_float_str;
+
+/** String describing FILTER_XOR. */
+extern const std::string filter_xor_str;
+
+/** String describing FILTER_WEBP. */
+extern const std::string filter_webp_str;
+
 /** The string representation for FilterOption type compression_level. */
 extern const std::string filter_option_compression_level_str;
 
@@ -323,6 +450,30 @@ extern const std::string filter_option_bit_width_max_window_str;
 /** The string representation for FilterOption type positive_delta_max_window.
  */
 extern const std::string filter_option_positive_delta_max_window_str;
+
+/** The string representation for FilterOption type scale_float_bytewidth. */
+extern const std::string filter_option_scale_float_bytewidth;
+
+/** The string representation for FilterOption type scale_float_factor. */
+extern const std::string filter_option_scale_float_factor;
+
+/** The string representation for FilterOption type scale_float_offset. */
+extern const std::string filter_option_scale_float_offset;
+
+/** The string representation for FilterOption type webp_quality. */
+extern const std::string filter_option_webp_quality;
+
+/** The string representation for FilterOption type webp_input_format. */
+extern const std::string filter_option_webp_input_format;
+
+/** The string representation for FilterOption type webp_lossless. */
+extern const std::string filter_option_webp_lossless;
+
+/**
+ * The string representation for FilterOption type
+ * compression_reinterpret_datatype.
+ */
+extern const std::string filter_option_compression_reinterpret_datatype;
 
 /** The string representation for type int32. */
 extern const std::string int32_str;
@@ -338,6 +489,18 @@ extern const std::string float64_str;
 
 /** The string representation for type char. */
 extern const std::string char_str;
+
+/** The string representation for type blob. */
+extern const std::string blob_str;
+
+/** The string representation for type geom_wkb. */
+extern const std::string geom_wkb_str;
+
+/** The string representation for type geom_wkt. */
+extern const std::string geom_wkt_str;
+
+/** The string representation for type bool. */
+extern const std::string bool_str;
 
 /** The string representation for type int8. */
 extern const std::string int8_str;
@@ -468,6 +631,15 @@ extern const std::string hilbert_str;
 /** The string representation of null. */
 extern const std::string null_str;
 
+/** The string representation of unordered data. */
+extern const std::string data_unordered_str;
+
+/** The string representation of increasing order data. */
+extern const std::string data_increasing_str;
+
+/** The string representation of decreasing order data. */
+extern const std::string data_decreasing_str;
+
 /** The string representation for object type invalid. */
 extern const std::string object_type_invalid_str;
 
@@ -510,11 +682,41 @@ extern const std::string vfsmode_append_str;
 /** The TileDB library version in format { major, minor, revision }. */
 extern const int32_t library_version[3];
 
+/** The TileDB serialization base format version number. */
+extern const uint32_t base_format_version;
+
 /** The TileDB serialization format version number. */
-extern const uint32_t format_version;
+extern const format_version_t format_version;
 
 /** The lowest version supported for back compat writes. */
-extern const uint32_t back_compat_writes_min_format_version;
+extern const format_version_t back_compat_writes_min_format_version;
+
+/** The lowest version supported for consolidation with timestamps. */
+extern const format_version_t consolidation_with_timestamps_min_version;
+
+/** The lowest version supported for deletes. */
+extern const format_version_t deletes_min_version;
+
+/** The lowest version supported for updates. */
+extern const format_version_t updates_min_version;
+
+/** The lowest version supported for tile min/max/sum/null count data. */
+extern const format_version_t tile_metadata_min_version;
+
+/** The lowest version supported for enumerations. */
+extern const format_version_t enumerations_min_format_version;
+
+/** The current Enumerations version. */
+extern const format_version_t enumerations_version;
+
+/** The lowest version supported format version for CurrentDomain API. */
+extern const format_version_t current_domain_min_format_version;
+
+/** The current CurrentDomain API version. */
+extern const format_version_t current_domain_version;
+
+/** The NDRectangle current_domain */
+extern const std::string current_domain_ndrectangle_str;
 
 /** The maximum size of a tile chunk (unit of compression) in bytes. */
 extern const uint64_t max_tile_chunk_size;
@@ -531,16 +733,6 @@ extern const unsigned int s3_max_attempts;
 /** Milliseconds of wait time between S3 attempts. */
 extern const unsigned int s3_attempt_sleep_ms;
 
-/** Maximum number of attempts to wait for an Azure response. */
-extern const unsigned int azure_max_attempts;
-
-/**
- * Milliseconds of wait time between Azure attempts. Currently,
- * the Azure SDK only supports retries with a second-granularity.
- * This number will be floored to the nearest second.
- */
-extern const unsigned int azure_attempt_sleep_ms;
-
 /** Maximum number of attempts to wait for an GCS response. */
 extern const unsigned int gcs_max_attempts;
 
@@ -549,6 +741,9 @@ extern const unsigned int gcs_attempt_sleep_ms;
 
 /** An allocation tag used for logging. */
 extern const std::string s3_allocation_tag;
+
+/** The S3 custom headers config key prefix. */
+extern const std::string s3_header_prefix;
 
 /** Prefix indicating a special name reserved by TileDB. */
 extern const std::string special_name_prefix;
@@ -565,16 +760,55 @@ const void* fill_value(Datatype type);
 /** The redirection header key in REST response. */
 extern const std::string redirection_header_key;
 
-#ifdef __linux__
-/** List of possible certificates files for libcurl */
-extern const std::array<std::string, 6> cert_files_linux;
-#endif
+/** The REST custom headers config key prefix. */
+extern const std::string rest_header_prefix;
 
 /** Delimiter for lists passed as config parameter */
 extern const std::string config_delimiter;
-}  // namespace constants
 
-}  // namespace sm
-}  // namespace tiledb
+/** String describing MIME_AUTODETECT. */
+extern const std::string mime_autodetect_str;
+
+/** String describing MIME_TIFF. */
+extern const std::string mime_tiff_str;
+
+/** String describing MIME_PDF. */
+extern const std::string mime_pdf_str;
+
+/** The default tile extent used in filestore arrays. */
+extern const uint64_t filestore_default_tile_extent;
+
+/** Name of the single dimension used in filestore arrays. */
+extern const std::string filestore_dimension_name;
+
+/** Name of the single attribute used in filestore arrays. */
+extern const std::string filestore_attribute_name;
+
+/** Name of the metadata key used in filestore arrays for current size. */
+extern const std::string filestore_metadata_size_key;
+
+/** Name of the metadata key used in filestore arrays for mime type. */
+extern const std::string filestore_metadata_mime_type_key;
+
+/** Name of the metadata key used in filestore arrays for mime encoding. */
+extern const std::string filestore_metadata_mime_encoding_key;
+
+/** Name of the metadata key used in filestore arrays for original filename. */
+extern const std::string filestore_metadata_original_filename_key;
+
+/** Name of the metadata key used in filestore arrays for filename extension. */
+extern const std::string filestore_metadata_file_extension_key;
+
+/** The minimum size of an s3 multipart upload intermediate part. */
+extern const uint64_t s3_min_multipart_part_size;
+
+/**
+ * The dir name under fragment uri used by s3 to store remote
+ * global order writes intermediate chunks
+ */
+extern const std::string s3_multipart_buffering_dirname;
+
+}  // namespace constants
+}  // namespace tiledb::sm
 
 #endif  // TILEDB_CONSTANTS_H

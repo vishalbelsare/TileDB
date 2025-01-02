@@ -37,14 +37,36 @@
 #include <unordered_map>
 #include <vector>
 
+#include "tiledb/common/exception/exception.h"
 #include "tiledb/common/macros.h"
 #include "tiledb/common/status.h"
 
 using namespace tiledb::common;
 
 namespace tiledb {
+
+namespace common::filesystem {
+class directory_entry;
+}
+
 namespace sm {
 
+class URI;
+
+/** Class for MemFS status exceptions. */
+class MemFSException : public StatusException {
+ public:
+  explicit MemFSException(const std::string& msg)
+      : StatusException("MemFS", msg) {
+  }
+};
+
+/**
+ * The in-memory filesystem.
+ *
+ * @invariant The MemFilesystem is associated with a single VFS instance.
+ * @invariant The MemFilesystem exists on a single, global Context.
+ */
 class MemFilesystem {
  public:
   /* ********************************* */
@@ -120,6 +142,15 @@ class MemFilesystem {
    * @return Status
    */
   Status ls(const std::string& path, std::vector<std::string>* paths) const;
+
+  /**
+   *
+   * Lists files and files information under path
+   *
+   * @param path  The parent path to list sub-paths
+   * @return A list of directory_entry objects
+   */
+  std::vector<filesystem::directory_entry> ls_with_sizes(const URI& path) const;
 
   /**
    * Move a given filesystem path.

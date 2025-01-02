@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,9 +30,8 @@
  * Tests the C++ API for query related functions.
  */
 
-#include "catch.hpp"
+#include <test/support/tdb_catch.h>
 #include "tiledb/sm/cpp_api/tiledb"
-#include "tiledb/sm/misc/utils.h"
 
 using namespace tiledb;
 
@@ -195,7 +194,7 @@ TEST_CASE(
   std::vector<int> coords_w = {0, 0, 1, 1, 2, 2, 3, 3};
   Array array_w(ctx, array_name, TILEDB_WRITE);
   Query query_w(ctx, array_w);
-  query_w.set_coordinates(coords_w)
+  query_w.set_data_buffer("__coords", coords_w)
       .set_layout(TILEDB_UNORDERED)
       .set_data_buffer("a", data_w);
   query_w.submit();
@@ -206,7 +205,9 @@ TEST_CASE(
   Array array1(ctx, array_name, TILEDB_READ);
   Query query1(ctx, array1);
   int range[] = {1, 2};
-  query1.add_range(0, range[0], range[1]).add_range(1, range[0], range[1]);
+  Subarray subarray1(ctx, array1);
+  subarray1.add_range(0, range[0], range[1]).add_range(1, range[0], range[1]);
+  query1.set_subarray(subarray1);
   auto est_size = query1.est_result_size("a");
   std::vector<int> data(est_size);
   query1.set_layout(TILEDB_ROW_MAJOR).set_data_buffer("a", data);
@@ -219,7 +220,7 @@ TEST_CASE(
   // Open and write to the same array without closing it.
   Array array2(ctx, array_name, TILEDB_WRITE);
   Query query2(ctx, array2);
-  query2.set_coordinates(coords_w)
+  query2.set_data_buffer("__coords", coords_w)
       .set_layout(TILEDB_UNORDERED)
       .set_data_buffer("a", data_w);
   query2.submit();
@@ -266,21 +267,22 @@ TEST_CASE(
   // Add 1 range per dimension
   std::string s1("a", 1);
   std::string s2("cc", 2);
-  CHECK_NOTHROW(query.add_range("d1", s1, s2));
+  Subarray subarray(ctx, array);
+  CHECK_NOTHROW(subarray.add_range("d1", s1, s2));
   int range[] = {1, 2};
-  CHECK_NOTHROW(query.add_range("d2", range[0], range[1]));
+  CHECK_NOTHROW(subarray.add_range("d2", range[0], range[1]));
 
   // Check number of ranges on each dimension
-  int range_num = query.range_num("d1");
+  int range_num = subarray.range_num("d1");
   CHECK(range_num == 1);
-  range_num = query.range_num("d2");
+  range_num = subarray.range_num("d2");
   CHECK(range_num == 1);
 
   // Check ranges
-  std::array<std::string, 2> range1 = query.range("d1", 0);
+  std::array<std::string, 2> range1 = subarray.range("d1", 0);
   CHECK(range1[0] == s1);
   CHECK(range1[1] == s2);
-  std::array<int, 3> range2 = query.range<int>("d2", 0);
+  std::array<int, 3> range2 = subarray.range<int>("d2", 0);
   CHECK(range2[0] == 1);
   CHECK(range2[1] == 2);
   CHECK(range2[2] == 0);
@@ -290,4 +292,108 @@ TEST_CASE(
 
   if (vfs.is_dir(array_name))
     vfs.remove_dir(array_name);
+}
+
+/**
+ * #TODO: Change data_w to be type std::vector<bool>.
+ *
+ * Note: This is not a trivial change; It will require bitset optimization in
+ * the implementation of Query::set_data_buffer.
+ */
+TEST_CASE(
+    "C++ API: Test boolean query buffer", "[cppapi][query][bool_buffer]") {
+  const std::string array_name = "bool_buffer_array";
+  Context ctx;
+  VFS vfs(ctx);
+
+  if (vfs.is_dir(array_name))
+    vfs.remove_dir(array_name);
+
+  // Create the array
+  Domain domain(ctx);
+  domain.add_dimension(Dimension::create<uint8_t>(ctx, "rows", {{0, 3}}, 4))
+      .add_dimension(Dimension::create<uint8_t>(ctx, "cols", {{0, 3}}, 4));
+  ArraySchema schema(ctx, TILEDB_SPARSE);
+  schema.set_domain(domain).set_order({{TILEDB_ROW_MAJOR, TILEDB_ROW_MAJOR}});
+  schema.add_attribute(Attribute::create<uint8_t>(ctx, "a"));
+  Array::create(array_name, schema);
+
+  // Write some initial data and close the array.
+  std::vector<uint8_t> data_w = {0, 1, 0, 1};
+  std::vector<uint8_t> coords_w = {0, 0, 1, 1, 2, 2, 3, 3};
+  Array array_w(ctx, array_name, TILEDB_WRITE);
+  Query query_w(ctx, array_w);
+  query_w.set_data_buffer("__coords", coords_w)
+      .set_layout(TILEDB_UNORDERED)
+      .set_data_buffer("a", data_w);
+  query_w.submit();
+  query_w.finalize();
+  array_w.close();
+
+  // Read the array.
+  Array array_r(ctx, array_name, TILEDB_READ);
+  Query query_r(ctx, array_r);
+  std::vector<uint8_t> data_r(4);
+  query_r.set_layout(TILEDB_ROW_MAJOR).set_data_buffer("a", data_r);
+  query_r.submit();
+  REQUIRE(data_r[0] == data_w[0]);
+  REQUIRE(data_r[1] == data_w[1]);
+  REQUIRE(data_r[2] == data_w[2]);
+  REQUIRE(data_r[3] == data_w[3]);
+  query_r.finalize();
+  array_r.close();
+
+  if (vfs.is_dir(array_name))
+    vfs.remove_dir(array_name);
+}
+
+TEST_CASE(
+    "C++ API: Test query set_data_buffer typecheck",
+    "[cppapi][query][set_data_buffer]") {
+  const std::string array_name = "buffer_typecheck_array";
+  Context ctx;
+  VFS vfs(ctx);
+  if (vfs.is_dir(array_name)) {
+    vfs.remove_dir(array_name);
+  }
+
+  // Create the array
+  Domain domain(ctx);
+  domain.add_dimension(Dimension::create<uint32_t>(ctx, "d1", {{0, 3}}, 4));
+  ArraySchema schema(ctx, TILEDB_SPARSE);
+  schema.set_domain(domain).set_order({{TILEDB_ROW_MAJOR, TILEDB_ROW_MAJOR}});
+  schema.add_attribute(Attribute::create<float>(ctx, "a1"));
+  Array::create(array_name, schema);
+  Array array(ctx, array_name, TILEDB_WRITE);
+  Query query(ctx, array);
+
+  SECTION("- Test setting buffers with invalid datatype") {
+    std::vector<uint16_t> d1_data = {0, 1, 2, 3};
+    std::vector<uint64_t> a1_data = {0, 1, 2, 3};
+    CHECK_THROWS_WITH(
+        query.set_data_buffer("d1", d1_data),
+        Catch::Matchers::ContainsSubstring("does not match expected type"));
+    CHECK_THROWS_WITH(
+        query.set_data_buffer("a1", a1_data),
+        Catch::Matchers::ContainsSubstring("does not match expected type"));
+    CHECK_THROWS_WITH(
+        query.set_data_buffer("d1", d1_data.data(), d1_data.size()),
+        Catch::Matchers::ContainsSubstring("does not match expected type"));
+    CHECK_THROWS_WITH(
+        query.set_data_buffer("a1", a1_data.data(), a1_data.size()),
+        Catch::Matchers::ContainsSubstring("does not match expected type"));
+  }
+
+  std::vector<uint32_t> d1_data = {0, 1, 2, 3};
+  std::vector<float> a1_data = {0.0f, 1.1f, 2.2f, 3.3f};
+  SECTION("- Test setting buffers with valid datatype") {
+    CHECK_NOTHROW(query.set_data_buffer("d1", d1_data));
+    CHECK_NOTHROW(query.set_data_buffer("a1", a1_data));
+    CHECK_NOTHROW(query.submit());
+  }
+
+  array.close();
+  if (vfs.is_dir(array_name)) {
+    vfs.remove_dir(array_name);
+  }
 }

@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  * @copyright Copyright (c) 2016 MIT and Intel Corporation
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -34,17 +34,26 @@
 #ifndef TILEDB_FRAGMENT_METADATA_H
 #define TILEDB_FRAGMENT_METADATA_H
 
+#include <deque>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 
 #include "tiledb/common/common.h"
-#include "tiledb/common/status.h"
+#include "tiledb/common/pmr.h"
+#include "tiledb/sm/array_schema/array_schema.h"
+#include "tiledb/sm/filesystem/uri.h"
+#include "tiledb/sm/fragment/loaded_fragment_metadata.h"
 #include "tiledb/sm/misc/types.h"
-#include "tiledb/sm/misc/uri.h"
 #include "tiledb/sm/rtree/rtree.h"
+#include "tiledb/sm/storage_manager/context_resources.h"
 
 using namespace tiledb::common;
+using namespace tiledb::type;
+
+namespace tiledb::type {
+class Range;
+}
 
 namespace tiledb {
 namespace sm {
@@ -52,8 +61,15 @@ namespace sm {
 class ArraySchema;
 class Buffer;
 class EncryptionKey;
-class OpenArrayMemoryTracker;
-class StorageManager;
+class TileMetadata;
+class MemoryTracker;
+
+class FragmentMetadataStatusException : public StatusException {
+ public:
+  explicit FragmentMetadataStatusException(const std::string& message)
+      : StatusException("FragmentMetadata", message) {
+  }
+};
 
 /** Stores the metadata structures of a fragment. */
 class FragmentMetadata {
@@ -63,45 +79,95 @@ class FragmentMetadata {
   /* ********************************* */
 
   /**
-   * Default contructor
+   * Constructor.
+   *
+   * @param resources A context resources instance.
+   * @param memory_tracker The memory tracker of the array this fragment
+   *     metadata corresponds to.
    */
-  FragmentMetadata() = default;
+  FragmentMetadata(
+      ContextResources* resources,
+      shared_ptr<MemoryTracker> memory_tracker,
+      format_version_t version);
 
   /**
    * Constructor.
    *
-   * @param storage_manager A storage manager instance.
+   * @param resources A context resources instance.
+   * @param memory_tracker The memory tracker of the array this fragment
+   *     metadata corresponds to.
    * @param array_schema The schema of the array the fragment belongs to.
    * @param fragment_uri The fragment URI.
    * @param timestamp_range The timestamp range of the fragment.
    *     In TileDB, timestamps are in ms elapsed since
    *     1970-01-01 00:00:00 +0000 (UTC).
+   * @param memory_tracker Memory tracker for the fragment metadata.
    * @param dense Indicates whether the fragment is dense or sparse.
+   * @param has_timestamps Does the fragment contains timestamps.
+   * @param has_delete_meta Does the fragment contains delete metadata.
    */
   FragmentMetadata(
-      StorageManager* storage_manager,
-      const ArraySchema* array_schema,
+      ContextResources* resources,
+      const shared_ptr<const ArraySchema>& array_schema,
       const URI& fragment_uri,
       const std::pair<uint64_t, uint64_t>& timestamp_range,
-      bool dense = true);
+      shared_ptr<MemoryTracker> memory_tracker,
+      bool dense = true,
+      bool has_timestamps = false,
+      bool has_delete_mata = false);
 
   /** Destructor. */
-  ~FragmentMetadata();
+  ~FragmentMetadata() = default;
 
-  // Copy initialization
-  FragmentMetadata(const FragmentMetadata& other);
+  DISABLE_COPY_AND_COPY_ASSIGN(FragmentMetadata);
+  DISABLE_MOVE_AND_MOVE_ASSIGN(FragmentMetadata);
 
-  FragmentMetadata& operator=(const FragmentMetadata& other);
+  /* ********************************* */
+  /*          TYPE DEFINITIONS         */
+  /* ********************************* */
+
+  /**
+   * Stores the start offsets of the generic tiles stored in the
+   * metadata file, each separately storing the various metadata
+   * (e.g., R-Tree, tile offsets, etc).
+   */
+  struct GenericTileOffsets {
+    uint64_t rtree_ = 0;
+    std::vector<uint64_t> tile_offsets_;
+    std::vector<uint64_t> tile_var_offsets_;
+    std::vector<uint64_t> tile_var_sizes_;
+    std::vector<uint64_t> tile_validity_offsets_;
+    std::vector<uint64_t> tile_min_offsets_;
+    std::vector<uint64_t> tile_max_offsets_;
+    std::vector<uint64_t> tile_sum_offsets_;
+    std::vector<uint64_t> tile_null_count_offsets_;
+    uint64_t fragment_min_max_sum_null_count_offset_;
+    uint64_t processed_conditions_offsets_;
+  };
 
   /* ********************************* */
   /*                API                */
   /* ********************************* */
+
+  /**
+   * Returns the number of dimensions and attributes.
+   */
+  inline uint64_t num_dims_and_attrs() const {
+    return array_schema_->attribute_num() + array_schema_->dim_num() + 1 +
+           has_timestamps_ + (has_delete_meta_ * 2);
+  }
 
   /** Returns the number of cells in the fragment. */
   uint64_t cell_num() const;
 
   /** Returns the number of cells in the tile at the input position. */
   uint64_t cell_num(uint64_t tile_pos) const;
+
+  /**
+   * Returns the dimensions types from the array schema asssociated
+   * with this fragment metadata.
+   */
+  std::vector<Datatype> dim_types() const;
 
   /**
    * Computes an upper bound on the buffer sizes needed when reading a subarray
@@ -114,9 +180,8 @@ class FragmentMetadata {
    *     maps an attribute to a buffer size pair. For fix-sized attributes, only
    *     the first size is useful. For var-sized attributes, the first is the
    *     offsets size, whereas the second is the data size.
-   * @return Status
    */
-  Status add_max_buffer_sizes(
+  void add_max_buffer_sizes(
       const EncryptionKey& encryption_key,
       const void* subarray,
       std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
@@ -133,9 +198,8 @@ class FragmentMetadata {
    *     maps an attribute to a buffer size pair. For fix-sized attributes, only
    *     the first size is useful. For var-sized attributes, the first is the
    *     offsets size, whereas the second is the data size.
-   * @return Status
    */
-  Status add_max_buffer_sizes_dense(
+  void add_max_buffer_sizes_dense(
       const void* subarray,
       std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
           buffer_sizes);
@@ -152,10 +216,9 @@ class FragmentMetadata {
    *     maps an attribute to a buffer size pair. For fix-sized attributes, only
    *     the first size is useful. For var-sized attributes, the first is the
    *     offsets size, whereas the second is the data size.
-   * @return Status
    */
   template <class T>
-  Status add_max_buffer_sizes_dense(
+  void add_max_buffer_sizes_dense(
       const T* subarray,
       std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
           buffer_sizes);
@@ -172,9 +235,8 @@ class FragmentMetadata {
    *     maps an attribute to a buffer size pair. For fix-sized attributes, only
    *     the first size is useful. For var-sized attributes, the first is the
    *     offsets size, whereas the second is the data size.
-   * @return Status
    */
-  Status add_max_buffer_sizes_sparse(
+  void add_max_buffer_sizes_sparse(
       const EncryptionKey& encryption_key,
       const NDRange& subarray,
       std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>*
@@ -188,73 +250,188 @@ class FragmentMetadata {
   std::vector<std::pair<uint64_t, double>> compute_overlapping_tile_ids_cov(
       const T* subarray) const;
 
+  /** Retrieves the fragment size. */
+  uint64_t fragment_size() const;
+
   /**
    * Returns true if the corresponding fragment is dense, and false if it
    * is sparse.
    */
-  bool dense() const;
+  inline bool dense() const {
+    return dense_;
+  }
 
   /** Returns the (expanded) domain in which the fragment is constrained. */
-  const NDRange& domain() const;
+  inline const NDRange& domain() const {
+    return domain_;
+  }
 
   /** Returns the format version of this fragment. */
-  uint32_t format_version() const;
-
-  /** Retrieves the fragment size. */
-  Status fragment_size(uint64_t* size) const;
+  inline format_version_t format_version() const {
+    return version_;
+  }
 
   /** Returns the fragment URI. */
-  const URI& fragment_uri() const;
+  inline const URI& fragment_uri() const {
+    return fragment_uri_;
+  }
 
   /** Returns true if the metadata footer is consolidated. */
-  bool has_consolidated_footer() const;
+  inline bool has_consolidated_footer() const {
+    return has_consolidated_footer_;
+  }
 
-  /**
-   * Returns true if the input range overlaps the non-empty
-   * domain of the fragment.
-   */
-  bool overlaps_non_empty_domain(const NDRange& range) const;
+  /** Returns true if the fragment has timestamps. */
+  inline bool has_timestamps() const {
+    return has_timestamps_;
+  }
 
-  /**
-   * Retrieves the overlap of all MBRs with the input ND range. The encryption
-   * key is needed because certain metadata may have to be loaded on-the-fly.
-   */
-  Status get_tile_overlap(const NDRange& range, TileOverlap* tile_overlap);
+  /** Returns true if the fragment has delete metadata. */
+  inline bool has_delete_meta() const {
+    return has_delete_meta_;
+  }
 
-  /**
-   * Compute tile bitmap for the curent fragment/range/dimension.
-   */
-  void compute_tile_bitmap(
-      const Range& range, unsigned d, std::vector<uint8_t>* tile_bitmap);
+  inline bool has_tile_metadata() {
+    return version_ >= constants::tile_metadata_min_version;
+  }
+
+  /** Returns the sizes of each attribute file. */
+  inline const std::vector<uint64_t>& file_sizes() const {
+    return file_sizes_;
+  }
+
+  /** Returns the sizes of each variable attribute file. */
+  inline const std::vector<uint64_t>& file_var_sizes() const {
+    return file_var_sizes_;
+  }
+
+  /** Returns the sizes of each validity attribute file. */
+  inline const std::vector<uint64_t>& file_validity_sizes() const {
+    return file_validity_sizes_;
+  }
+
+  /** Returns the number of sparse tiles. */
+  inline const uint64_t& sparse_tile_num() const {
+    return sparse_tile_num_;
+  }
+
+  /** Returns the tile index base value. */
+  inline const uint64_t& tile_index_base() const {
+    return tile_index_base_;
+  }
+
+  /** Returns the fragment timestamp range. */
+  inline const std::pair<uint64_t, uint64_t>& timestamp_range() const {
+    return timestamp_range_;
+  }
+
+  /** Returns the number of cells in the last tile. */
+  inline const uint64_t& last_tile_cell_num() const {
+    return last_tile_cell_num_;
+  }
+
+  /** Returns the non-empty domain of the fragment. */
+  inline const NDRange& non_empty_domain() const {
+    return non_empty_domain_;
+  }
+
+  /** Returns the generic tile offsets. */
+  inline const GenericTileOffsets& generic_tile_offsets() const {
+    return gt_offsets_;
+  }
 
   /**
    * Initializes the fragment metadata structures.
    *
    * @param non_empty_domain The non-empty domain in which the array read/write
    *     will be constrained.
-   * @return Status
    */
-  Status init(const NDRange& non_empty_domain);
+  void init(const NDRange& non_empty_domain);
 
-  /** Returns the number of cells in the last tile. */
-  uint64_t last_tile_cell_num() const;
+  /**
+   * Initializes the fragment's internal domain and non-empty domain members
+   */
+  void init_domain(const NDRange& non_empty_domain);
 
   /**
    * Loads the basic metadata from storage or `f_buff` for later
    * versions if it is not `nullptr`.
    */
-  Status load(
+  void load(
       const EncryptionKey& encryption_key,
-      Buffer* f_buff,
+      Tile* fragment_metadata_tile,
       uint64_t offset,
-      std::unordered_map<std::string, tdb_shared_ptr<ArraySchema>>
-          array_schemas);
+      std::unordered_map<std::string, shared_ptr<ArraySchema>> array_schemas);
+
+  /**
+   * Loads the fragment metadata of an open array given a vector of
+   * fragment URIs `fragments_to_load`.
+   * The function stores the fragment metadata of each fragment
+   * in `fragments_to_load` into the returned vector, such
+   * that there is a one-to-one correspondence between the two vectors.
+   *
+   * If `meta_buf` has data, then some fragment metadata may be contained
+   * in there and does not need to be loaded from storage. In that
+   * case, `offsets` helps identifying each fragment metadata in the
+   * buffer.
+   *
+   * @param resources A context resources instance.
+   * @param memory_tracker The memory tracker of the array
+   *     for which the metadata is loaded. This will be passed to
+   *     the constructor of each of the metadata loaded.
+   * @param array_schema_latest The latest array schema.
+   * @param array_schemas_all All the array schemas in a map keyed by the
+   *     schema filename.
+   * @param encryption_key The encryption key to use.
+   * @param fragments_to_load The fragments whose metadata to load.
+   * @param offsets A map from a fragment name to an offset in `meta_buff`
+   *     where the basic fragment metadata can be found. If the offset
+   *     cannot be found, then the metadata of that fragment will be loaded from
+   *     storage instead.
+   * @return Vector of FragmentMetadata is the fragment metadata to be
+   * retrieved.
+   */
+  static std::vector<shared_ptr<FragmentMetadata>> load(
+      ContextResources& resources,
+      shared_ptr<MemoryTracker> memory_tracker,
+      const shared_ptr<const ArraySchema> array_schema,
+      const std::unordered_map<std::string, shared_ptr<ArraySchema>>&
+          array_schemas_all,
+      const EncryptionKey& encryption_key,
+      const std::vector<TimestampedURI>& fragments_to_load,
+      const std::unordered_map<std::string, std::pair<Tile*, uint64_t>>&
+          offsets);
 
   /** Stores all the metadata to storage. */
-  Status store(const EncryptionKey& encryption_key);
+  void store(const EncryptionKey& encryption_key);
 
-  /** Returns the non-empty domain in which the fragment is constrained. */
-  const NDRange& non_empty_domain();
+  /**
+   * Stores all the metadata to storage.
+   *
+   * Applicable to format versions 7 to 10.
+   */
+  void store_v7_v10(const EncryptionKey& encryption_key);
+
+  /**
+   * Stores all the metadata to storage.
+   *
+   * Applicable to format versions 11.
+   */
+  void store_v11(const EncryptionKey& encryption_key);
+
+  /**
+   * Stores all the metadata to storage.
+   *
+   * Applicable to format versions 12 or higher.
+   */
+  void store_v12_v14(const EncryptionKey& encryption_key);
+
+  /**
+   * Stores all the metadata to storage.
+   *
+   * Applicable to format versions 15 or higher.
+   */
+  void store_v15_or_higher(const EncryptionKey& encryption_key);
 
   /**
    * Simply sets the number of cells for the last tile.
@@ -270,18 +447,16 @@ class FragmentMetadata {
    *
    * @param tile The tile index whose MBR will be set.
    * @param mbr The MBR to be set.
-   * @return Status
    */
-  Status set_mbr(uint64_t tile, const NDRange& mbr);
+  void set_mbr(uint64_t tile, const NDRange& mbr);
 
   /**
    * Resizes the per-tile metadata vectors for the given number of tiles. This
    * is not serialized, and is only used during writes.
    *
    * @param num_tiles Number of tiles
-   * @return Status
    */
-  Status set_num_tiles(uint64_t num_tiles);
+  void set_num_tiles(uint64_t num_tiles);
 
   /**
    * Sets the tile "index base" which is added to the tile index in the set_*()
@@ -341,15 +516,116 @@ class FragmentMetadata {
       const std::string& name, uint64_t tid, uint64_t step);
 
   /**
+   * Sets a tile min for the fixed input attribute.
+   *
+   * @param name The attribute for which the min is set.
+   * @param tid The index of the tile for which the min is set.
+   * @param min The minimum.
+   * @return void
+   */
+  void set_tile_min(const std::string& name, uint64_t tid, const ByteVec& min);
+
+  /**
+   * Sets a tile min size for the var input attribute.
+   *
+   * @param name The attribute for which the min size is set.
+   * @param tid The index of the tile for which the min is set.
+   * @param size The size.
+   * @return void
+   */
+  void set_tile_min_var_size(
+      const std::string& name, uint64_t tid, uint64_t size);
+
+  /**
+   * Sets a tile min for the var input attribute.
+   *
+   * @param name The attribute for which the min is set.
+   * @param tid The index of the tile for which the min is set.
+   * @param min The minimum.
+   * @return void
+   */
+  void set_tile_min_var(
+      const std::string& name, uint64_t tid, const ByteVec& min);
+
+  /**
+   * Sets a tile max for the input attribute.
+   *
+   * @param name The attribute for which the max is set.
+   * @param tid The index of the tile for which the max is set.
+   * @param max The maximum.
+   * @return void
+   */
+  void set_tile_max(const std::string& name, uint64_t tid, const ByteVec& max);
+
+  /**
+   * Sets a tile max for the var input attribute.
+   *
+   * @param name The attribute for which the min size is set.
+   * @param tid The index of the tile for which the min is set.
+   * @param size The size.
+   * @return void
+   */
+  void set_tile_max_var_size(
+      const std::string& name, uint64_t tid, uint64_t size);
+
+  /**
+   * Sets a tile max for the var input attribute.
+   *
+   * @param name The attribute for which the min is set.
+   * @param tid The index of the tile for which the min is set.
+   * @param max The maximum.
+   * @return void
+   */
+  void set_tile_max_var(
+      const std::string& name, uint64_t tid, const ByteVec& max);
+
+  /**
+   * Converts min/max sizes to offsets.
+   *
+   * @param name The attribute for which the offsets are converted
+   * @return void
+   */
+  void convert_tile_min_max_var_sizes_to_offsets(const std::string& name);
+
+  /**
+   * Sets a tile sum for the input attribute.
+   *
+   * @param name The attribute for which the sum is set.
+   * @param tid The index of the tile for which the sum is set.
+   * @param sum The sum.
+   * @return void
+   */
+  void set_tile_sum(const std::string& name, uint64_t tid, const ByteVec& sum);
+
+  /**
+   * Sets a tile null count for the input attribute.
+   *
+   * @param name The attribute for which the null count is set.
+   * @param tid The index of the tile for which the null count is set.
+   * @param sum The null count.
+   * @return void
+   */
+  void set_tile_null_count(
+      const std::string& name, uint64_t tid, uint64_t null_count);
+
+  /**
+   * Compute fragment min, max, sum, null count for all dimensions/attributes.
+   */
+  void compute_fragment_min_max_sum_null_count();
+
+  /**
    * Sets array schema pointer.
    *
    * @param array_schema The schema pointer.
    * @return void
    */
-  void set_array_schema(ArraySchema* array_schema);
+  void set_array_schema(const shared_ptr<const ArraySchema>& array_schema);
 
-  /** Returns the tile index base value. */
-  uint64_t tile_index_base() const;
+  /** Sets the array_schema name */
+  void set_schema_name(const std::string& name);
+
+  /** Sets the internal dense_ field*/
+  void set_dense(bool dense);
 
   /** Returns the number of tiles in the fragment. */
   uint64_t tile_num() const;
@@ -364,50 +640,7 @@ class FragmentMetadata {
   URI validity_uri(const std::string& name) const;
 
   /** Return the array schema name. */
-  const std::string& array_schema_name();
-
-  /**
-   * Retrieves the starting offset of the input tile of the input attribute
-   * or dimension in the file. If the attribute/dimension is var-sized, it
-   * returns the starting offset of the offsets tile.
-   *
-   * @param name The input attribute/dimension.
-   * @param tile_idx The index of the tile in the metadata.
-   * @param offset The file offset to be retrieved.
-   * @return Status
-   */
-  Status file_offset(
-      const std::string& name, uint64_t tile_idx, uint64_t* offset);
-
-  /**
-   * Retrieves the starting offset of the input tile of input attribute or
-   * dimension in the file. The attribute/dimension must be var-sized.
-   *
-   * @param name The input attribute/dimension.
-   * @param tile_idx The index of the tile in the metadata.
-   * @param offset The file offset to be retrieved.
-   * @return Status
-   */
-  Status file_var_offset(
-      const std::string& name, uint64_t tile_idx, uint64_t* offset);
-
-  /**
-   * Retrieves the starting offset of the input validity tile of the
-   * input attribute in the file.
-   *
-   * @param name The input attribute.
-   * @param tile_idx The index of the tile in the metadata.
-   * @param offset The file offset to be retrieved.
-   * @return Status
-   */
-  Status file_validity_offset(
-      const std::string& name, uint64_t tile_idx, uint64_t* offset);
-
-  /**
-   * Retrieves the size of the fragment metadata footer
-   * (which contains the generic tile offsets) along with its size.
-   */
-  Status get_footer_size(uint32_t version, uint64_t* size) const;
+  const std::string& array_schema_name() const;
 
   uint64_t footer_size() const;
 
@@ -415,46 +648,7 @@ class FragmentMetadata {
   const NDRange& mbr(uint64_t tile_idx) const;
 
   /** Returns all the MBRs of all tiles in the fragment. */
-  const std::vector<NDRange>& mbrs() const;
-
-  /**
-   * Retrieves the size of the tile when it is persisted (e.g. the size of the
-   * compressed tile on disk) for a given attribute or dimension and tile index.
-   * If the attribute/dimension is var-sized, this will return the persisted
-   * size of the offsets tile.
-   *
-   * @param name The input attribute/dimension.
-   * @param tile_idx The index of the tile in the metadata.
-   * @param tile_size The tile size to be retrieved.
-   * @return Status
-   */
-  Status persisted_tile_size(
-      const std::string& name, uint64_t tile_idx, uint64_t* tile_size);
-
-  /**
-   * Retrieves the size of the tile when it is persisted (e.g. the size of the
-   * compressed tile on disk) for a given var-sized attribute or dimension
-   * and tile index.
-   *
-   * @param name The input attribute/dimension.
-   * @param tile_idx The index of the tile in the metadata.
-   * @param tile_size The tile size to be retrieved.
-   * @return Status
-   */
-  Status persisted_tile_var_size(
-      const std::string& name, uint64_t tile_idx, uint64_t* tile_size);
-
-  /**
-   * Retrieves the size of the validity tile when it is persisted (e.g. the size
-   * of the compressed tile on disk) for a given attribute.
-   *
-   * @param name The input attribute.
-   * @param tile_idx The index of the tile in the metadata.
-   * @param tile_size The tile size to be retrieved.
-   * @return Status
-   */
-  Status persisted_tile_validity_size(
-      const std::string& name, uint64_t tile_idx, uint64_t* tile_size);
+  const tdb::pmr::vector<NDRange>& mbrs() const;
 
   /**
    * Returns the (uncompressed) tile size for a given attribute or dimension
@@ -468,22 +662,48 @@ class FragmentMetadata {
   uint64_t tile_size(const std::string& name, uint64_t tile_idx) const;
 
   /**
-   * Retrieves the (uncompressed) tile size for a given var-sized attribute or
-   * dimension and tile index.
+   * Retrieves the tile min value for a given attribute or dimension and tile
+   * index.
    *
    * @param name The input attribute/dimension.
    * @param tile_idx The index of the tile in the metadata.
-   * @param tile_size The tile size to be retrieved.
-   * @return Status
+   * @return Value.
    */
-  Status tile_var_size(
-      const std::string& name, uint64_t tile_idx, uint64_t* tile_size);
+  template <typename T>
+  T get_tile_min_as(const std::string& name, uint64_t tile_idx) const;
+
+  /**
+   * Retrieves the tile max value for a given attribute or dimension and tile
+   * index.
+   *
+   * @tparam Type to return the data as.
+   * @param name The input attribute/dimension.
+   * @param tile_idx The index of the tile in the metadata.
+   * @return Value.
+   */
+  template <typename T>
+  T get_tile_max_as(const std::string& name, uint64_t tile_idx) const;
+
+  /**
+   * Returns the tile metadata for a tile.
+   *
+   * @param name Name of the attribute to get the data for.
+   * @param tile_idx Tile index.
+   */
+  TileMetadata get_tile_metadata(
+      const std::string& name, const uint64_t tile_idx) const;
+
+  /**
+   * Set the processed conditions. The processed conditions is the list
+   * of delete/update conditions that have already been applied for this
+   * fragment and don't need to be applied again.
+   *
+   * @param processed_conditions The processed conditions.
+   */
+  void set_processed_conditions(std::vector<std::string>& processed_conditions);
 
   /** Returns the first timestamp of the fragment timestamp range. */
   uint64_t first_timestamp() const;
-
-  /** Returns the fragment timestamp range. */
-  const std::pair<uint64_t, uint64_t>& timestamp_range() const;
 
   /**
    * Returns `true` if the timestamp of the first operand is smaller,
@@ -492,85 +712,136 @@ class FragmentMetadata {
   bool operator<(const FragmentMetadata& metadata) const;
 
   /** Serializes the fragment metadata footer into the input buffer. */
-  Status write_footer(Buffer* buff) const;
-
-  /** Loads the R-tree from storage. */
-  Status load_rtree(const EncryptionKey& encryption_key);
-
-  /** Frees the memory associated with the rtree. */
-  void free_rtree();
+  void write_footer(Serializer& serializer) const;
 
   /**
-   * Loads the variable tile sizes for the input attribute or dimension idx
-   * from storage.
-   * */
-  Status load_tile_var_sizes(
-      const EncryptionKey& encryption_key, const std::string& name);
-
-  /**
-   * Loads tile offsets for the attribute/dimension names.
+   * Checks if the fragment overlaps partially (not fully) with a given
+   * array open - end time. Assumes overlapping fragment and array open - close
+   * times.
    *
-   * @param encryption_key The key the array got opened with.
-   * @param names The attribute/dimension names.
-   * @return Status
-   */
-  Status load_tile_offsets(
-      const EncryptionKey& encryption_key, std::vector<std::string>&& names);
-
-  /**
-   * Loads validity tile offsets for the attribute names.
+   * @param array_start_timestamp Array open time
+   * @param array_end_timestamp Array end time
    *
-   * @param encryption_key The key the array got opened with.
-   * @param names The attribute names.
-   * @return Status
+   * @return True if there is partial overlap, false if there is full
    */
-  Status load_tile_validity_offsets(
-      const EncryptionKey& encryption_key, std::vector<std::string>&& names);
+  inline bool partial_time_overlap(
+      const uint64_t array_start_timestamp,
+      const uint64_t array_end_timestamp) const {
+    const auto fragment_timestamp_start = timestamp_range_.first;
+    const auto fragment_timestamp_end = timestamp_range_.second;
+    // This method assumes overlapping fragment and array times so checking that
+    // we don't have full overlap is sufficient for detecting partial overlap.
+    auto full_fragment_overlap =
+        (fragment_timestamp_start >= array_start_timestamp) &&
+        (fragment_timestamp_end <= array_end_timestamp);
+    return !full_fragment_overlap;
+  }
 
   /**
    * Returns ArraySchema
    *
    * @return
    */
-  const ArraySchema* array_schema() const;
+  const shared_ptr<const ArraySchema>& array_schema() const;
+
+  /** File sizes accessor */
+  std::vector<uint64_t>& file_sizes() {
+    return file_sizes_;
+  }
+
+  /** File var sizes accessor */
+  std::vector<uint64_t>& file_var_sizes() {
+    return file_var_sizes_;
+  }
+
+  /** File validity sizes accessor */
+  std::vector<uint64_t>& file_validity_sizes() {
+    return file_validity_sizes_;
+  }
+
+  /** Fragment uri accessor */
+  URI& fragment_uri() {
+    return fragment_uri_;
+  }
+
+  /** has_timestamps accessor */
+  bool& has_timestamps() {
+    return has_timestamps_;
+  }
+
+  /** has_delete_meta accessor */
+  bool& has_delete_meta() {
+    return has_delete_meta_;
+  }
+
+  /** has_consolidated_footer accessor */
+  bool& has_consolidated_footer() {
+    return has_consolidated_footer_;
+  }
+
+  /** sparse_tile_num accessor */
+  uint64_t& sparse_tile_num() {
+    return sparse_tile_num_;
+  }
+
+  /** tile_index_base accessor */
+  uint64_t& tile_index_base() {
+    return tile_index_base_;
+  }
+
+  /** version accessor */
+  uint32_t& version() {
+    return version_;
+  }
+
+  /** timestamp_range accessor */
+  std::pair<uint64_t, uint64_t>& timestamp_range() {
+    return timestamp_range_;
+  }
+
+  /** last_tile_cell_num accessor */
+  uint64_t& last_tile_cell_num() {
+    return last_tile_cell_num_;
+  }
+
+  /** non_empty_domain accessor */
+  NDRange& non_empty_domain() {
+    return non_empty_domain_;
+  }
+
+  /** gt_offsets_ accessor */
+  inline GenericTileOffsets& generic_tile_offsets() {
+    return gt_offsets_;
+  }
+
+  /** set the CR pointer during deserialization*/
+  void set_context_resources(ContextResources* cr) {
+    resources_ = cr;
+  }
+
+  inline LoadedFragmentMetadata* loaded_metadata() {
+    return loaded_metadata_ptr_;
+  }
+
+  inline const LoadedFragmentMetadata* loaded_metadata() const {
+    return loaded_metadata_ptr_;
+  }
 
  private:
-  /* ********************************* */
-  /*          TYPE DEFINITIONS         */
-  /* ********************************* */
-
-  /**
-   * Stores the start offsets of the generic tiles stored in the
-   * metadata file, each separately storing the various metadata
-   * (e.g., R-Tree, tile offsets, etc).
-   */
-  struct GenericTileOffsets {
-    uint64_t rtree_ = 0;
-    std::vector<uint64_t> tile_offsets_;
-    std::vector<uint64_t> tile_var_offsets_;
-    std::vector<uint64_t> tile_var_sizes_;
-    std::vector<uint64_t> tile_validity_offsets_;
-  };
-
-  /** Keeps track of which metadata is loaded. */
-  struct LoadedMetadata {
-    bool footer_ = false;
-    bool rtree_ = false;
-    std::vector<bool> tile_offsets_;
-    std::vector<bool> tile_var_offsets_;
-    std::vector<bool> tile_var_sizes_;
-    std::vector<bool> tile_validity_offsets_;
-  };
-
   /* ********************************* */
   /*         PRIVATE ATTRIBUTES        */
   /* ********************************* */
 
   /** The storage manager. */
-  StorageManager* storage_manager_;
+  ContextResources* resources_;
+
+  /**
+   * The memory tracker of the array this fragment metadata corresponds to.
+   */
+  shared_ptr<MemoryTracker> memory_tracker_;
 
   /** The array schema */
-  const ArraySchema* array_schema_;
+  shared_ptr<const ArraySchema> array_schema_;
 
   /** The array schema name */
   std::string array_schema_name_;
@@ -578,12 +849,9 @@ class FragmentMetadata {
   /**
    * Maps an attribute or dimension to an index used in the various vector
    * class members. Attributes are first, then TILEDB_COORDS, then the
-   * dimensions.
+   * dimensions, then timestamp.
    */
   std::unordered_map<std::string, unsigned> idx_map_;
-
-  /** A vector storing the first and last coordinates of each tile. */
-  std::vector<std::vector<uint8_t>> bounding_coords_;
 
   /** True if the fragment is dense, and false if it is sparse. */
   bool dense_;
@@ -620,11 +888,14 @@ class FragmentMetadata {
   /** Number of cells in the last tile (meaningful only in the sparse case). */
   uint64_t last_tile_cell_num_;
 
+  /** True if the fragment has timestamps, and false otherwise. */
+  bool has_timestamps_;
+
+  /** True if the fragment has delete metadata, and false otherwise. */
+  bool has_delete_meta_;
+
   /** Number of sparse tiles. */
   uint64_t sparse_tile_num_;
-
-  /** Keeps track of which metadata has been loaded. */
-  LoadedMetadata loaded_metadata_;
 
   /** The size of the fragment metadata file. */
   uint64_t meta_file_size_;
@@ -632,47 +903,14 @@ class FragmentMetadata {
   /** Local mutex for thread-safety. */
   std::mutex mtx_;
 
-  /** Mutex per tile offset loading. */
-  std::deque<std::mutex> tile_offsets_mtx_;
-
-  /** Mutex per tile var offset loading. */
-  std::deque<std::mutex> tile_var_offsets_mtx_;
-
   /** The non-empty domain of the fragment. */
   NDRange non_empty_domain_;
-
-  /** An RTree for the MBRs. */
-  RTree rtree_;
 
   /**
    * The tile index base which is added to tile indices in setter functions.
    * Only used in global order writes.
    */
   uint64_t tile_index_base_;
-
-  /**
-   * The tile offsets in their corresponding attribute files. Meaningful only
-   * when there is compression.
-   */
-  std::vector<std::vector<uint64_t>> tile_offsets_;
-
-  /**
-   * The variable tile offsets in their corresponding attribute files.
-   * Meaningful only for variable-sized tiles.
-   */
-  std::vector<std::vector<uint64_t>> tile_var_offsets_;
-
-  /**
-   * The sizes of the uncompressed variable tiles.
-   * Meaningful only when there is compression for variable tiles.
-   */
-  std::vector<std::vector<uint64_t>> tile_var_sizes_;
-
-  /**
-   * The validity tile offsets in their corresponding attribute files.
-   * Meaningful only when there is compression.
-   */
-  std::vector<std::vector<uint64_t>> tile_validity_offsets_;
 
   /** The format version of this metadata. */
   uint32_t version_;
@@ -686,6 +924,10 @@ class FragmentMetadata {
   /** The uri of the array the metadata belongs to. */
   URI array_uri_;
 
+  shared_ptr<LoadedFragmentMetadata> loaded_metadata_;
+
+  LoadedFragmentMetadata* loaded_metadata_ptr_;
+
   /* ********************************* */
   /*           PRIVATE METHODS         */
   /* ********************************* */
@@ -694,7 +936,7 @@ class FragmentMetadata {
    * Retrieves the offset in the fragment metadata file of the footer
    * (which contains the generic tile offsets) along with its size.
    */
-  Status get_footer_offset_and_size(uint64_t* offset, uint64_t* size) const;
+  void get_footer_offset_and_size(uint64_t* offset, uint64_t* size) const;
 
   /**
    * Returns the size of the fragment metadata footer
@@ -716,9 +958,9 @@ class FragmentMetadata {
    * Returns the size of the fragment metadata footer
    * (which contains the generic tile offsets) along with its size.
    *
-   * Applicable to format version 7 or higher.
+   * Applicable to format version 7 to 9.
    */
-  uint64_t footer_size_v7_or_higher() const;
+  uint64_t footer_size_v7_v9() const;
 
   /**
    * Returns the ids (positions) of the tiles overlapping `subarray`.
@@ -742,205 +984,168 @@ class FragmentMetadata {
   /**
    * Expands the non-empty domain using the input MBR.
    */
-  Status expand_non_empty_domain(const NDRange& mbr);
-
-  /**
-   * Loads the tile offsets for the input attribute or dimension idx
-   * from storage.
-   */
-  Status load_tile_offsets(const EncryptionKey& encryption_key, unsigned idx);
-
-  /**
-   * Loads the variable tile offsets for the input attribute or dimension idx
-   * from storage.
-   */
-  Status load_tile_var_offsets(
-      const EncryptionKey& encryption_key, unsigned idx);
-
-  /**
-   * Loads the variable tile sizes for the input attribute or dimension idx
-   * from storage.
-   * */
-  Status load_tile_var_sizes(const EncryptionKey& encryption_key, unsigned idx);
-
-  /**
-   * Loads the validity tile offsets for the input attribute idx
-   * from storage.
-   */
-  Status load_tile_validity_offsets(
-      const EncryptionKey& encryption_key, unsigned idx);
+  void expand_non_empty_domain(const NDRange& mbr);
 
   /** Loads the generic tile offsets from the buffer. */
-  Status load_generic_tile_offsets(ConstBuffer* buff);
+  void load_generic_tile_offsets(Deserializer& deserializer);
 
   /**
    * Loads the generic tile offsets from the buffer. Applicable to
-   * versions 4 and 5.
+   * versions 3 and 4.
    */
-  Status load_generic_tile_offsets_v3_v4(ConstBuffer* buff);
+  void load_generic_tile_offsets_v3_v4(Deserializer& deserializer);
 
   /**
    * Loads the generic tile offsets from the buffer. Applicable to
    * versions 5 and 6.
    */
-  Status load_generic_tile_offsets_v5_v6(ConstBuffer* buff);
+  void load_generic_tile_offsets_v5_v6(Deserializer& deserializer);
 
   /**
    * Loads the generic tile offsets from the buffer. Applicable to
-   * versions 7 or higher.
+   * versions 7 to 10.
    */
-  Status load_generic_tile_offsets_v7_or_higher(ConstBuffer* buff);
+  void load_generic_tile_offsets_v7_v10(Deserializer& deserializer);
+
+  /**
+   * Loads the generic tile offsets from the buffer. Applicable to
+   * versions 11.
+   */
+  void load_generic_tile_offsets_v11(Deserializer& deserializer);
+
+  /**
+   * Loads the generic tile offsets from the buffer. Applicable to
+   * versions 12 to 15.
+   */
+  void load_generic_tile_offsets_v12_v15(Deserializer& deserializer);
+
+  /**
+   * Loads the generic tile offsets from the buffer. Applicable to
+   * versions 16 or higher.
+   */
+  void load_generic_tile_offsets_v16_or_higher(Deserializer& deserializer);
 
   /**
    * Loads the array schema name.
    */
-  Status load_array_schema_name(ConstBuffer* buff);
+  void load_array_schema_name(Deserializer& deserializer);
 
   /**
    * Loads the bounding coordinates from the fragment metadata buffer.
    *
-   * @param buff Metadata buffer.
-   * @return Status
+   * @param deserializer Deserializer to get data from.
    */
-  Status load_bounding_coords(ConstBuffer* buff);
+  void load_bounding_coords(Deserializer& deserializer);
 
   /** Loads the sizes of each attribute or dimension file from the buffer. */
-  Status load_file_sizes(ConstBuffer* buff);
+  void load_file_sizes(Deserializer& deserializer);
 
   /**
    * Loads the sizes of each attribute or dimension file from the buffer.
    * Applicable to format versions 1 to 4.
    */
-  Status load_file_sizes_v1_v4(ConstBuffer* buff);
+  void load_file_sizes_v1_v4(Deserializer& deserializer);
 
   /**
    * Loads the sizes of each attribute or dimension file from the buffer.
    * Applicable to format version 5 or higher.
    */
-  Status load_file_sizes_v5_or_higher(ConstBuffer* buff);
+  void load_file_sizes_v5_or_higher(Deserializer& deserializer);
 
   /**
    * Loads the sizes of each variable attribute or dimension file from the
    * buffer.
    */
-  Status load_file_var_sizes(ConstBuffer* buff);
+  void load_file_var_sizes(Deserializer& deserializer);
 
   /**
    * Loads the sizes of each variable attribute or dimension file from the
    * buffer. Applicable to version 1 to 4.
    */
-  Status load_file_var_sizes_v1_v4(ConstBuffer* buff);
+  void load_file_var_sizes_v1_v4(Deserializer& deserializer);
 
   /**
    * Loads the sizes of each variable attribute or dimension file from the
    * buffer. Applicable to version 5 or higher.
    */
-  Status load_file_var_sizes_v5_or_higher(ConstBuffer* buff);
+  void load_file_var_sizes_v5_or_higher(Deserializer& deserializer);
 
   /** Loads the sizes of each attribute validity file from the buffer. */
-  Status load_file_validity_sizes(ConstBuffer* buff);
+  void load_file_validity_sizes(Deserializer& deserializer);
 
   /**
    * Loads the cell number of the last tile from the fragment metadata buffer.
    *
-   * @param buff Metadata buffer.
-   * @return Status
+   * @param deserializer Deserializer to get data from.
    */
-  Status load_last_tile_cell_num(ConstBuffer* buff);
+  void load_last_tile_cell_num(Deserializer& deserializer);
+
+  /**
+   * Loads the `has_timestamps_` field from the buffer.
+   *
+   * @param deserializer Deserializer to get data from.
+   */
+  void load_has_timestamps(Deserializer& deserializer);
+
+  /**
+   * Loads the `has_delete_meta_` field from the buffer.
+   *
+   * @param deserializer Deserializer to get data from.
+   */
+  void load_has_delete_meta(Deserializer& deserializer);
 
   /**
    * Loads the MBRs from the fragment metadata buffer.
    *
-   * @param buff Metadata buffer.
-   * @return Status
+   * @param deserializer Deserializer to get data from.
    */
-  Status load_mbrs(ConstBuffer* buff);
+  void load_mbrs(Deserializer& deserializer);
 
   /** Loads the non-empty domain from the input buffer. */
-  Status load_non_empty_domain(ConstBuffer* buff);
+  void load_non_empty_domain(Deserializer& deserializer);
 
   /**
    * Loads the non-empty domain from the input buffer,
    * for format versions <= 2.
    */
-  Status load_non_empty_domain_v1_v2(ConstBuffer* buff);
+  void load_non_empty_domain_v1_v2(Deserializer& deserializer);
 
   /**
    * Loads the non-empty domain from the input buffer,
    * for format versions 3 and 4.
    */
-  Status load_non_empty_domain_v3_v4(ConstBuffer* buff);
+  void load_non_empty_domain_v3_v4(Deserializer& deserializer);
 
   /**
    * Loads the non-empty domain from the input buffer,
    * for format versions >= 5.
    */
-  Status load_non_empty_domain_v5_or_higher(ConstBuffer* buff);
-
-  /**
-   * Loads the tile offsets for the input attribute from the input buffer.
-   * Applicable to versions 1 and 2
-   */
-  Status load_tile_offsets(ConstBuffer* buff);
-
-  /**
-   * Loads the tile offsets for the input attribute or dimension from the
-   * input buffer.
-   */
-  Status load_tile_offsets(unsigned idx, ConstBuffer* buff);
-
-  /**
-   * Loads the variable tile offsets from the input buffer.
-   * Applicable to versions 1 and 2
-   */
-  Status load_tile_var_offsets(ConstBuffer* buff);
-
-  /**
-   * Loads the variable tile offsets for the input attribute or dimension from
-   * the input buffer.
-   */
-  Status load_tile_var_offsets(unsigned idx, ConstBuffer* buff);
-
-  /** Loads the variable tile sizes from the input buffer. */
-  Status load_tile_var_sizes(ConstBuffer* buff);
-
-  /**
-   * Loads the variable tile sizes for the input attribute or dimension
-   * from the input buffer.
-   */
-  Status load_tile_var_sizes(unsigned idx, ConstBuffer* buff);
-
-  /**
-   * Loads the validity tile offsets for the input attribute from the
-   * input buffer.
-   */
-  Status load_tile_validity_offsets(unsigned idx, ConstBuffer* buff);
+  void load_non_empty_domain_v5_or_higher(Deserializer& deserializer);
 
   /** Loads the format version from the buffer. */
-  Status load_version(ConstBuffer* buff);
+  void load_version(Deserializer& deserializer);
 
   /** Loads the `dense_` field from the buffer. */
-  Status load_dense(ConstBuffer* buff);
+  void load_dense(Deserializer& deserializer);
 
   /** Loads the number of sparse tiles from the buffer. */
-  Status load_sparse_tile_num(ConstBuffer* buff);
+  void load_sparse_tile_num(Deserializer& deserializer);
 
   /** Loads the basic metadata from storage (version 2 or before). */
-  Status load_v1_v2(
+  void load_v1_v2(
       const EncryptionKey& encryption_key,
-      const std::unordered_map<std::string, tdb_shared_ptr<ArraySchema>>&
+      const std::unordered_map<std::string, shared_ptr<ArraySchema>>&
           array_schemas);
 
   /**
    * Loads the basic metadata from storage or the input `f_buff` if
    * it is not `nullptr` (version 3 or after).
    */
-  Status load_v3_or_higher(
+  void load_v3_or_higher(
       const EncryptionKey& encryption_key,
-      Buffer* f_buff,
+      Tile* fragment_metadata_tile,
       uint64_t offset,
-      std::unordered_map<std::string, tdb_shared_ptr<ArraySchema>>
-          array_schemas);
+      std::unordered_map<std::string, shared_ptr<ArraySchema>> array_schemas);
 
   /**
    * Loads the footer of the metadata file, which contains
@@ -948,50 +1153,58 @@ class FragmentMetadata {
    * the footer will be loaded from the file, otherwise it
    * will be loaded from `f_buff`.
    */
-  Status load_footer(
+  void load_footer(
       const EncryptionKey& encryption_key,
-      Buffer* f_buff,
+      Tile* fragment_metadata_tile,
       uint64_t offset,
-      std::unordered_map<std::string, tdb_shared_ptr<ArraySchema>>
-          array_schemas);
+      std::unordered_map<std::string, shared_ptr<ArraySchema>> array_schemas);
 
   /** Writes the sizes of each attribute file to the buffer. */
-  Status write_file_sizes(Buffer* buff) const;
+  void write_file_sizes(Serializer& serializer) const;
 
   /** Writes the sizes of each variable attribute file to the buffer. */
-  Status write_file_var_sizes(Buffer* buff) const;
+  void write_file_var_sizes(Serializer& serializer) const;
 
   /** Writes the sizes of each validitiy attribute file to the buffer. */
-  Status write_file_validity_sizes(Buffer* buff) const;
+  void write_file_validity_sizes(Serializer& serializer) const;
 
   /** Writes the generic tile offsets to the buffer. */
-  Status write_generic_tile_offsets(Buffer* buff) const;
+  void write_generic_tile_offsets(Serializer& serializer) const;
 
   /** Writes the array schema name. */
-  Status write_array_schema_name(Buffer* buff) const;
+  void write_array_schema_name(Serializer& serializer) const;
 
   /**
    * Writes the cell number of the last tile to the fragment metadata buffer.
    */
-  Status write_last_tile_cell_num(Buffer* buff) const;
+  void write_last_tile_cell_num(Serializer& serializer) const;
+
+  /**
+   * Writes the `has_timestamps_` field to the fragment metadata buffer.
+   */
+  void write_has_timestamps(Serializer& serializer) const;
+
+  /**
+   * Writes the `has_delete_meta_` field to the fragment metadata buffer.
+   */
+  void write_has_delete_meta(Serializer& serializer) const;
 
   /**
    * Writes the R-tree to storage.
    *
    * @param encryption_key The encryption key.
    * @param nbytes The total number of bytes written for the R-tree.
-   * @return Status
    */
-  Status store_rtree(const EncryptionKey& encryption_key, uint64_t* nbytes);
+  void store_rtree(const EncryptionKey& encryption_key, uint64_t* nbytes);
 
   /** Stores a footer with the basic information. */
-  Status store_footer(const EncryptionKey& encryption_key);
+  void store_footer(const EncryptionKey& encryption_key);
 
-  /** Writes the R-tree to the input buffer. */
-  Status write_rtree(Buffer* buff);
+  /** Writes the R-tree to a tile. */
+  shared_ptr<WriterTile> write_rtree();
 
   /** Writes the non-empty domain to the input buffer. */
-  Status write_non_empty_domain(Buffer* buff) const;
+  void write_non_empty_domain(Serializer& serializer) const;
 
   /**
    * Writes the tile offsets of the input attribute or dimension to storage.
@@ -999,16 +1212,15 @@ class FragmentMetadata {
    * @param idx The index of the attribute or dimension.
    * @param encryption_key The encryption key.
    * @param nbytes The total number of bytes written for the tile offsets.
-   * @return Status
    */
-  Status store_tile_offsets(
+  void store_tile_offsets(
       unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes);
 
   /**
    * Writes the tile offsets of the input attribute or dimension idx to the
    * input buffer.
    */
-  Status write_tile_offsets(unsigned idx, Buffer* buff);
+  void write_tile_offsets(unsigned idx, Serializer& serializer);
 
   /**
    * Writes the variable tile offsets of the input attribute or dimension
@@ -1017,16 +1229,15 @@ class FragmentMetadata {
    * @param idx The index of the attribute or dimension.
    * @param encryption_key The encryption key.
    * @param nbytes The total number of bytes written for the tile var offsets.
-   * @return Status
    */
-  Status store_tile_var_offsets(
+  void store_tile_var_offsets(
       unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes);
 
   /**
    * Writes the variable tile offsets of the input attribute or dimension idx
    * to the buffer.
    */
-  Status write_tile_var_offsets(unsigned idx, Buffer* buff);
+  void write_tile_var_offsets(unsigned idx, Serializer& serializer);
 
   /**
    * Writes the variable tile sizes for the input attribute or dimension to
@@ -1035,16 +1246,15 @@ class FragmentMetadata {
    * @param idx The index of the attribute or dimension.
    * @param encryption_key The encryption key.
    * @param nbytes The total number of bytes written for the tile var sizes.
-   * @return Status
    */
-  Status store_tile_var_sizes(
+  void store_tile_var_sizes(
       unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes);
 
   /**
    * Writes the variable tile sizes for the input attribute or dimension
    * to storage.
    */
-  Status write_tile_var_sizes(unsigned idx, Buffer* buff);
+  void write_tile_var_sizes(unsigned idx, Serializer& serializer);
 
   /**
    * Writes the validity tile offsets of the input attribute to storage.
@@ -1053,52 +1263,155 @@ class FragmentMetadata {
    * @param encryption_key The encryption key.
    * @param nbytes The total number of bytes written for the validity tile
    * offsets.
-   * @return Status
    */
-  Status store_tile_validity_offsets(
+  void store_tile_validity_offsets(
       unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes);
 
   /**
    * Writes the validity tile offsets of the input attribute idx to the
    * input buffer.
    */
-  Status write_tile_validity_offsets(unsigned idx, Buffer* buff);
+  void write_tile_validity_offsets(unsigned idx, Serializer& serializer);
+
+  /**
+   * Writes the mins of the input attribute to storage.
+   *
+   * @param idx The index of the attribute.
+   * @param encryption_key The encryption key.
+   * @param nbytes The total number of bytes written for the mins.
+   */
+  void store_tile_mins(
+      unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes);
+
+  /**
+   * Writes the mins of the input attribute idx to the input buffer.
+   */
+  void write_tile_mins(unsigned idx, Serializer& serializer);
+
+  /**
+   * Writes the maxs of the input attribute to storage.
+   *
+   * @param idx The index of the attribute.
+   * @param encryption_key The encryption key.
+   * @param nbytes The total number of bytes written for the maxs.
+   */
+  void store_tile_maxs(
+      unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes);
+
+  /**
+   * Writes the maxs of the input attribute idx to the input buffer.
+   */
+  void write_tile_maxs(unsigned idx, Serializer& serializer);
+
+  /**
+   * Writes the sums of the input attribute to storage.
+   *
+   * @param idx The index of the attribute.
+   * @param encryption_key The encryption key.
+   * @param nbytes The total number of bytes written for the sums.
+   */
+  void store_tile_sums(
+      unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes);
+
+  /**
+   * Writes the sums of the input attribute idx to the input buffer.
+   */
+  void write_tile_sums(unsigned idx, Serializer& serializer);
+
+  /**
+   * Writes the null counts of the input attribute to storage.
+   *
+   * @param idx The index of the attribute.
+   * @param encryption_key The encryption key.
+   * @param nbytes The total number of bytes written for the null counts.
+   */
+  void store_tile_null_counts(
+      unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes);
+
+  /**
+   * Writes the null counts of the input attribute idx to the input buffer.
+   */
+  void write_tile_null_counts(unsigned idx, Serializer& serializer);
+
+  /**
+   * Writes the fragment min, max, sum and null count to storage.
+   *
+   * @param num The number of attributes.
+   * @param encryption_key The encryption key.
+   * @param nbytes The total number of bytes written.
+   */
+  void store_fragment_min_max_sum_null_count(
+      uint64_t num, const EncryptionKey& encryption_key, uint64_t* nbytes);
+
+  /**
+   * Writes the processed conditions to storage.
+   *
+   * @param encryption_key The encryption key.
+   * @param nbytes The total number of bytes written.
+   */
+  void store_processed_conditions(
+      const EncryptionKey& encryption_key, uint64_t* nbytes);
+
+  /**
+   * Compute the fragment min, max and sum values.
+   *
+   * @param name The attribute/dimension name.
+   */
+  template <class T>
+  void compute_fragment_min_max_sum(const std::string& name);
+
+  /**
+   * Compute the fragment sum value.
+   *
+   * @param idx The attribute/dimension index.
+   * @param nullable Is the attribute/dimension nullable.
+   */
+  template <class SumT>
+  void compute_fragment_sum(const uint64_t idx, const bool nullable);
+
+  /**
+   * Compute the fragment min and max values for var sized attributes.
+   *
+   * @param name The attribute/dimension name.
+   */
+  void min_max_var(const std::string& name);
 
   /** Writes the format version to the buffer. */
-  Status write_version(Buffer* buff) const;
+  void write_version(Serializer& serializer) const;
 
   /** Writes the `dense_` field to the buffer. */
-  Status write_dense(Buffer* buff) const;
+  void write_dense(Serializer& serializer) const;
 
   /** Writes the number of sparse tiles to the buffer. */
-  Status write_sparse_tile_num(Buffer* buff) const;
+  void write_sparse_tile_num(Serializer& serializer) const;
 
   /**
    * Reads the contents of a generic tile starting at the input offset,
-   * and stores them into buffer ``buff``.
+   * and returns a tile.
    */
-  Status read_generic_tile_from_file(
-      const EncryptionKey& encryption_key, uint64_t offset, Buffer* buff) const;
+  shared_ptr<Tile> read_generic_tile_from_file(
+      const EncryptionKey& encryption_key, uint64_t offset) const;
 
   /**
    * Reads the fragment metadata file footer (which contains the generic tile
    * offsets) into the input buffer.
    */
-  Status read_file_footer(
-      Buffer* buff, uint64_t* footer_offset, uint64_t* footer_size) const;
+  void read_file_footer(
+      std::shared_ptr<Tile>& tile,
+      uint64_t* footer_offset,
+      uint64_t* footer_size) const;
 
   /**
-   * Writes the contents of the input buffer as a separate
+   * Writes the contents of the input tile as a separate
    * generic tile to the metadata file.
    *
    * @param encryption_key The encryption key.
-   * @param buff The buffer whose contents the function will write.
+   * @param tile The tile whose contents the function will write.
    * @param nbytes The total number of bytes written to the file.
-   * @return Status
    */
-  Status write_generic_tile_to_file(
+  void write_generic_tile_to_file(
       const EncryptionKey& encryption_key,
-      Buffer&& buff,
+      shared_ptr<WriterTile> tile,
       uint64_t* nbytes) const;
 
   /**
@@ -1107,7 +1420,7 @@ class FragmentMetadata {
    * retrieval upon reading (as its size is predictable based on the
    * number of attributes).
    */
-  Status write_footer_to_file(Buffer* buff) const;
+  void write_footer_to_file(shared_ptr<WriterTile>) const;
 
   /**
    * Simple clean up function called in the case of error. It removes the
@@ -1120,7 +1433,7 @@ class FragmentMetadata {
    * motiviation is to encode illegal/reserved file name characters.
    *
    * @param name The dimension/attribute name.
-   * return std::string The encoded dimension/attribute name.
+   * @return the encoded dimension/attribute name.
    */
   std::string encode_name(const std::string& name) const;
 
@@ -1128,6 +1441,10 @@ class FragmentMetadata {
    * This builds the index mapping for attribute/dimension name to id.
    */
   void build_idx_map();
+
+  friend class LoadedFragmentMetadata;
+  friend class OndemandFragmentMetadata;
+  friend class V1V2PreloadedFragmentMetadata;
 };
 
 }  // namespace sm

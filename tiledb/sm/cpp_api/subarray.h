@@ -152,12 +152,12 @@ class Subarray {
    * subarray.add_range(0, start, end);
    * @endcode
    *
-   * @tparam T The dimension datatype
+   * @tparam T The dimension datatype.
    * @param dim_idx The index of the dimension to add the range to.
    * @param start The range start to add.
    * @param end The range end to add.
    * @param stride The range stride to add.
-   * @return Reference to this Query
+   * @return Reference to this Subarray.
    */
   template <class T>
   Subarray& add_range(uint32_t dim_idx, T start, T end, T stride = 0) {
@@ -190,12 +190,12 @@ class Subarray {
    * subarray.add_range(dim_name, start, end);
    * @endcode
    *
-   * @tparam T The dimension datatype
+   * @tparam T The dimension datatype.
    * @param dim_name The name of the dimension to add the range to.
    * @param start The range start to add.
    * @param end The range end to add.
    * @param stride The range stride to add.
-   * @return Reference to this Query
+   * @return Reference to this Subarray.
    */
   template <class T>
   Subarray& add_range(
@@ -226,11 +226,11 @@ class Subarray {
    * subarray.add_range(0, start, end);
    * @endcode
    *
-   * @tparam T The dimension datatype
+   * @tparam T The dimension datatype.
    * @param dim_idx The index of the dimension to add the range to.
    * @param start The range start to add.
    * @param end The range end to add.
-   * @return Reference to this Query
+   * @return Reference to this Subarray.
    */
   Subarray& add_range(
       uint32_t dim_idx, const std::string& start, const std::string& end) {
@@ -262,11 +262,11 @@ class Subarray {
    * subarray.add_range(dim_name, start, end);
    * @endcode
    *
-   * @tparam T The dimension datatype
+   * @tparam T The dimension datatype.
    * @param dim_name The name of the dimension to add the range to.
    * @param start The range start to add.
    * @param end The range end to add.
-   * @return Reference to this Query
+   * @return Reference to this Subarray.
    */
   Subarray& add_range(
       const std::string& dim_name,
@@ -326,21 +326,12 @@ class Subarray {
   }
 
   /**
-   * Set the query config.
+   * Set the subarray config.
    *
    * Setting configuration with this function overrides the following
-   * Query-level parameters only:
+   * Subarray-level parameters only:
    *
-   * - `sm.memory_budget`
-   * - `sm.memory_budget_var`
-   * - `sm.sub_partitioner_memory_budget`
-   * - `sm.var_offsets.mode`
-   * - `sm.var_offsets.extra_element`
-   * - `sm.var_offsets.bitsize`
-   * - `sm.check_coord_dups`
-   * - `sm.check_coord_oob`
-   * - `sm.check_global_order`
-   * - `sm.dedup_coords`
+   * - `sm.read_range_oob`
    */
   Subarray& set_config(const Config& config) {
     auto ctx = ctx_.get();
@@ -392,7 +383,7 @@ class Subarray {
    */
   template <typename T = uint64_t>
   Subarray& set_subarray(const std::initializer_list<T>& l) {
-    return set_subarray(std::vector<T>(l));
+    return set_subarray(std::data(l), l.size());
   }
 
   /**
@@ -527,9 +518,10 @@ class Subarray {
         &start,
         &end,
         &stride));
-    std::array<T, 3> ret = {{*(const T*)start,
-                             *(const T*)end,
-                             (stride == nullptr) ? 0 : *(const T*)stride}};
+    std::array<T, 3> ret = {
+        {*(const T*)start,
+         *(const T*)end,
+         (stride == nullptr) ? 0 : *(const T*)stride}};
     return ret;
   }
 
@@ -633,6 +625,8 @@ class Subarray {
   }
 
  private:
+  friend class SubarrayExperimental;
+
   /* ********************************* */
   /*         PRIVATE ATTRIBUTES        */
   /* ********************************* */

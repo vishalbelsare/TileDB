@@ -33,7 +33,7 @@
 #ifndef TILEDB_STATS_H
 #define TILEDB_STATS_H
 
-#include "tiledb/common/scoped_executor.h"
+#include "duration_instrument.h"
 
 #include <inttypes.h>
 #include <chrono>
@@ -52,9 +52,66 @@ namespace sm {
 namespace stats {
 
 /**
+ * Class that holds measurement data that Stats objects can be
+ * initialized with.
+ */
+class StatsData {
+ public:
+  /* ****************************** */
+  /*   CONSTRUCTORS & DESTRUCTORS   */
+  /* ****************************** */
+
+  /* Default constructor */
+  StatsData() = default;
+
+  /**
+   * Value constructor.
+   *
+   * @param counters A map of counters
+   * @param timers A map of timers
+   */
+  StatsData(
+      std::unordered_map<std::string, uint64_t>& counters,
+      std::unordered_map<std::string, double>& timers)
+      : counters_(counters)
+      , timers_(timers) {
+  }
+
+  /* ****************************** */
+  /*              API               */
+  /* ****************************** */
+
+  /** Get a reference to internal counters */
+  const std::unordered_map<std::string, uint64_t>& counters() const {
+    return counters_;
+  }
+
+  /** Get a reference to internal timers */
+  const std::unordered_map<std::string, double>& timers() const {
+    return timers_;
+  }
+
+ private:
+  /* ****************************** */
+  /*       PRIVATE ATTRIBUTES       */
+  /* ****************************** */
+
+  /** Map of counters and values */
+  std::unordered_map<std::string, uint64_t> counters_;
+
+  /** Map of timers and values */
+  std::unordered_map<std::string, double> timers_;
+};
+
+/**
  * Class that defines stats counters and methods to manipulate them.
  */
 class Stats {
+  /**
+   * Friends with DurationInstrument so it can call `report_duration`.
+   */
+  friend class DurationInstrument<Stats>;
+
  public:
   /* ****************************** */
   /*   CONSTRUCTORS & DESTRUCTORS   */
@@ -64,22 +121,44 @@ class Stats {
    * Value constructor.
    *
    * @param prefix The stat name prefix.
-   * @param parent If non-null, stats will be added to this instance.
    */
   Stats(const std::string& prefix);
+
+  /**
+   * Value constructor.
+   *
+   * @param prefix The stat name prefix.
+   * @param data Initial data to populate the Stats object with.
+   */
+  Stats(const std::string& prefix, const StatsData& data);
 
   /** Destructor. */
   ~Stats() = default;
 
-  /* ****************************** */
-  /*              API               */
-  /* ****************************** */
+/* ****************************** */
+/*              API               */
+/* ****************************** */
 
-  /**
-   * Starts a timer for the input timer stat. The timer
-   * ends when the returned `ScopedExecutor` object is destroyed.
-   */
-  common::ScopedExecutor start_timer(const std::string& stat);
+/**
+ * Create a timer sentry object that's reported under this `Stats` object.
+ *
+ * The time begins during the execution of this function; more precisely, it
+ * begins with the construction of the returned instrument object. The timer
+ * ends when that object is destroyed.
+ *
+ * The return value of this function must be assigned to a variable in order to
+ * have any practical effect. If it were to exist only as a temporary, such as
+ * if casting the return value to `void`, the timer would end before the next
+ * statement began. The resulting datum would have a value very near to zero and
+ * would measure only the duration of the temporary object.
+ *
+ * @param stat The name under which the duration is to be reported
+ */
+#ifdef TILEDB_STATS
+  [[nodiscard]] DurationInstrument<Stats> start_timer(const std::string& stat);
+#else
+  [[nodiscard]] int start_timer(const std::string& stat);
+#endif
 
   /** Adds `count` to the input counter stat. */
   void add_counter(const std::string& stat, uint64_t count);
@@ -108,11 +187,29 @@ class Stats {
   /** Creates a child instance, managed by this instance. */
   Stats* create_child(const std::string& prefix);
 
+  /**
+   * Creates a child instance, managed by this instance, the instance is
+   * constructed with initial data.
+   *
+   * @param prefix The stat name prefix.
+   * @param data Initial data to populate the Stats object with.
+   */
+  Stats* create_child(const std::string& prefix, const StatsData& data);
+
   /** Return pointer to timers map, used for serialization only. */
-  std::unordered_map<std::string, double>* timers();
+  const std::unordered_map<std::string, double>* timers() const;
 
   /** Return pointer to conters map, used for serialization only. */
-  std::unordered_map<std::string, uint64_t>* counters();
+  const std::unordered_map<std::string, uint64_t>* counters() const;
+
+  /**
+   * Populate the counters and timers internal maps from a StatsData object
+   * Please be aware that the data is not being added up, it will override the
+   * existing data on the Stats object.
+   *
+   * @param data Data to populate the stats with.
+   */
+  void populate_with_data(const StatsData& data);
 
  private:
   /* ****************************** */
@@ -131,14 +228,6 @@ class Stats {
   /** A map of counter stats. */
   std::unordered_map<std::string, uint64_t> counters_;
 
-  typedef std::unordered_map<
-      std::thread::id,
-      std::chrono::high_resolution_clock::time_point>
-      ThreadTimer;
-
-  /** The start time for all pending timers. */
-  std::unordered_map<std::string, ThreadTimer> start_times_;
-
   /** Prefix used for the various timers and counters. */
   const std::string prefix_;
 
@@ -155,8 +244,9 @@ class Stats {
   /*       PRIVATE FUNCTIONS        */
   /* ****************************** */
 
-  /** Ends a timer for the input timer stat. */
-  void end_timer(const std::string& stat);
+  /** Reports a duration. Called from a `DurationInstrument` object. */
+  void report_duration(
+      const std::string& stat, const std::chrono::duration<double> duration);
 
   /**
    * Populates the input stats with the instance stats. This is a

@@ -34,10 +34,11 @@
 #ifndef TILEDB_SINGLE_FRAGMENT_INFO_H
 #define TILEDB_SINGLE_FRAGMENT_INFO_H
 
+#include "tiledb/common/common.h"
 #include "tiledb/sm/enums/datatype.h"
+#include "tiledb/sm/filesystem/uri.h"
 #include "tiledb/sm/fragment/fragment_metadata.h"
 #include "tiledb/sm/misc/types.h"
-#include "tiledb/sm/misc/uri.h"
 
 #include <cinttypes>
 #include <sstream>
@@ -54,6 +55,7 @@ class SingleFragmentInfo {
   /** Constructor. */
   SingleFragmentInfo() {
     uri_ = URI("");
+    name_ = "";
     version_ = 0;
     cell_num_ = 0;
     sparse_ = false;
@@ -70,8 +72,9 @@ class SingleFragmentInfo {
       uint64_t fragment_size,
       const NDRange& non_empty_domain,
       const NDRange& expanded_non_empty_domain,
-      tdb_shared_ptr<FragmentMetadata> meta)
+      shared_ptr<FragmentMetadata> meta)
       : uri_(uri)
+      , name_(meta->fragment_uri().remove_trailing_slash().last_path_part())
       , version_(meta->format_version())
       , sparse_(sparse)
       , timestamp_range_(timestamp_range)
@@ -116,24 +119,20 @@ class SingleFragmentInfo {
   }
 
   /** Dumps the single fragment info in ASCII format in the selected output. */
-  void dump(const std::vector<Datatype>& dim_types, FILE* out) const {
-    if (out == nullptr)
-      out = stdout;
-
-    std::stringstream ss;
-    ss << "  > URI: " << uri_.c_str() << "\n";
-    ss << "  > Type: " << (sparse_ ? "sparse" : "dense") << "\n";
-    ss << "  > Non-empty domain: " << non_empty_domain_str(dim_types).c_str()
+  void dump_single_fragment_info(
+      std::ostream& os, const std::vector<Datatype>& dim_types) const {
+    os << "  > URI: " << uri_.c_str() << "\n";
+    os << "  > Schema name: " << array_schema_name_ << "\n";
+    os << "  > Type: " << (sparse_ ? "sparse" : "dense") << "\n";
+    os << "  > Non-empty domain: " << non_empty_domain_str(dim_types).c_str()
        << "\n";
-    ss << "  > Size: " << fragment_size_ << "\n";
-    ss << "  > Cell num: " << cell_num_ << "\n";
-    ss << "  > Timestamp range: [" << timestamp_range_.first << ", "
+    os << "  > Size: " << fragment_size_ << "\n";
+    os << "  > Cell num: " << cell_num_ << "\n";
+    os << "  > Timestamp range: [" << timestamp_range_.first << ", "
        << timestamp_range_.second << "]\n";
-    ss << "  > Format version: " << version_ << "\n";
-    ss << "  > Has consolidated metadata: "
+    os << "  > Format version: " << version_ << "\n";
+    os << "  > Has consolidated metadata: "
        << (has_consolidated_footer_ ? "yes" : "no") << "\n";
-
-    fprintf(out, "%s", ss.str().c_str());
   }
 
   /** Returns `true` if the fragment is sparse. */
@@ -146,12 +145,17 @@ class SingleFragmentInfo {
     return uri_;
   }
 
+  /** Returns the fragment name. */
+  const std::string& name() const {
+    return name_;
+  }
+
   /** Returns the timestamp range. */
   const std::pair<uint64_t, uint64_t>& timestamp_range() const {
     return timestamp_range_;
   }
 
-  uint32_t format_version() const {
+  format_version_t format_version() const {
     return version_;
   }
 
@@ -176,94 +180,8 @@ class SingleFragmentInfo {
   }
 
   /** Returns a pointer to the fragment's metadata. */
-  tdb_shared_ptr<FragmentMetadata> meta() const {
+  shared_ptr<FragmentMetadata> meta() const {
     return meta_;
-  }
-
-  /** Returns the non-empty domain in string format. */
-  std::string non_empty_domain_str(
-      const std::vector<Datatype>& dim_types) const {
-    std::stringstream ss;
-    for (uint32_t d = 0; d < (uint32_t)dim_types.size(); ++d) {
-      switch (dim_types[d]) {
-        case Datatype::INT8:
-          ss << "[" << ((int8_t*)non_empty_domain_[d].data())[0] << ", "
-             << ((int8_t*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::UINT8:
-          ss << "[" << ((uint8_t*)non_empty_domain_[d].data())[0] << ", "
-             << ((uint8_t*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::INT16:
-          ss << "[" << ((int16_t*)non_empty_domain_[d].data())[0] << ", "
-             << ((int16_t*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::UINT16:
-          ss << "[" << ((uint16_t*)non_empty_domain_[d].data())[0] << ", "
-             << ((uint16_t*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::INT32:
-          ss << "[" << ((int32_t*)non_empty_domain_[d].data())[0] << ", "
-             << ((int32_t*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::UINT32:
-          ss << "[" << ((uint32_t*)non_empty_domain_[d].data())[0] << ", "
-             << ((uint32_t*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::INT64:
-          ss << "[" << ((int64_t*)non_empty_domain_[d].data())[0] << ", "
-             << ((int64_t*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::UINT64:
-          ss << "[" << ((uint64_t*)non_empty_domain_[d].data())[0] << ", "
-             << ((uint64_t*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::FLOAT32:
-          ss << "[" << ((float*)non_empty_domain_[d].data())[0] << ", "
-             << ((float*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::FLOAT64:
-          ss << "[" << ((double*)non_empty_domain_[d].data())[0] << ", "
-             << ((double*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::DATETIME_YEAR:
-        case Datatype::DATETIME_MONTH:
-        case Datatype::DATETIME_WEEK:
-        case Datatype::DATETIME_DAY:
-        case Datatype::DATETIME_HR:
-        case Datatype::DATETIME_MIN:
-        case Datatype::DATETIME_SEC:
-        case Datatype::DATETIME_MS:
-        case Datatype::DATETIME_US:
-        case Datatype::DATETIME_NS:
-        case Datatype::DATETIME_PS:
-        case Datatype::DATETIME_FS:
-        case Datatype::DATETIME_AS:
-        case Datatype::TIME_HR:
-        case Datatype::TIME_MIN:
-        case Datatype::TIME_SEC:
-        case Datatype::TIME_MS:
-        case Datatype::TIME_US:
-        case Datatype::TIME_NS:
-        case Datatype::TIME_PS:
-        case Datatype::TIME_FS:
-        case Datatype::TIME_AS:
-          ss << "[" << ((int64_t*)non_empty_domain_[d].data())[0] << ", "
-             << ((int64_t*)non_empty_domain_[d].data())[1] << "]";
-          break;
-        case Datatype::STRING_ASCII:
-          ss << "[" << non_empty_domain_[d].start_str() << ", "
-             << non_empty_domain_[d].end_str() << "]";
-          break;
-        default:
-          assert(false);
-          break;
-      }
-      if (d != (uint32_t)dim_types.size() - 1)
-        ss << " x ";
-    }
-
-    return ss.str();
   }
 
   /** Returns the array schema name. */
@@ -271,12 +189,48 @@ class SingleFragmentInfo {
     return array_schema_name_;
   }
 
+  /** Returns the non-empty domain in string format. */
+  std::string non_empty_domain_str(
+      const std::vector<Datatype>& dim_types) const {
+    std::stringstream ss;
+    for (uint32_t d = 0; d < (uint32_t)dim_types.size(); ++d) {
+      ss << type::range_str(non_empty_domain_[d], dim_types[d]);
+      if (d != (uint32_t)dim_types.size() - 1) {
+        ss << " x ";
+      }
+    }
+
+    return ss.str();
+  }
+
+  /** Accessor to the fragment size. */
+  uint64_t& fragment_size() {
+    return fragment_size_;
+  }
+
+  /** Accessor to the metadata pointer. */
+  shared_ptr<FragmentMetadata>& meta() {
+    return meta_;
+  }
+
+  /** Accessor to the metadata pointer. */
+  NDRange& non_empty_domain() {
+    return non_empty_domain_;
+  }
+
  private:
   /** The fragment URI. */
   URI uri_;
 
+  /**
+   * The fragment name.
+   *
+   * #TODO: Remove upon removal of tiledb_fragment_info_get_fragment_name.
+   */
+  std::string name_;
+
   /** The format version of the fragment. */
-  uint32_t version_;
+  format_version_t version_;
 
   /** True if the fragment is sparse, and false if it is dense. */
   bool sparse_;
@@ -308,7 +262,7 @@ class SingleFragmentInfo {
   std::string array_schema_name_;
 
   /** The fragment metadata. **/
-  tdb_shared_ptr<FragmentMetadata> meta_;
+  shared_ptr<FragmentMetadata> meta_;
 
   /**
    * Returns a deep copy of this FragmentInfo.
@@ -317,6 +271,7 @@ class SingleFragmentInfo {
   SingleFragmentInfo clone() const {
     SingleFragmentInfo clone;
     clone.uri_ = uri_;
+    clone.name_ = name_;
     clone.version_ = version_;
     clone.cell_num_ = cell_num_;
     clone.sparse_ = sparse_;
@@ -333,6 +288,7 @@ class SingleFragmentInfo {
   /** Swaps the contents (all field values) of this info with the given info. */
   void swap(SingleFragmentInfo& info) {
     std::swap(uri_, info.uri_);
+    std::swap(name_, info.name_);
     std::swap(version_, info.version_);
     std::swap(cell_num_, info.cell_num_);
     std::swap(sparse_, info.sparse_);

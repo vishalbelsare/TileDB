@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2021 TileDB, Inc.
+ * @copyright Copyright (c) 2021-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,109 +33,105 @@
 #ifndef TILEDB_QUERY_CONDITION_H
 #define TILEDB_QUERY_CONDITION_H
 
+#include <span>
 #include <unordered_set>
 
 #include "tiledb/common/status.h"
 #include "tiledb/sm/array_schema/array_schema.h"
 #include "tiledb/sm/enums/query_condition_op.h"
-#include "tiledb/sm/query/result_cell_slab.h"
-#include "tiledb/sm/query/result_tile.h"
+#include "tiledb/sm/query/ast/query_ast.h"
 
 using namespace tiledb::common;
 
 namespace tiledb {
 namespace sm {
 
+class QueryConditionException : public StatusException {
+ public:
+  explicit QueryConditionException(const std::string& message)
+      : StatusException("QueryCondition", message) {
+  }
+};
+
+class FragmentMetadata;
+class MemoryTracker;
+struct ResultCellSlab;
+class ResultTile;
+
 enum class QueryConditionCombinationOp : uint8_t;
 
 class QueryCondition {
  public:
-  /* ********************************* */
-  /*          PUBLIC DATATYPES         */
-  /* ********************************* */
+  /** Class to pass query parameters to query condition processing. */
+  class Params {
+   public:
+    /* ********************************* */
+    /*     CONSTRUCTORS & DESTRUCTORS    */
+    /* ********************************* */
 
-  /** Represents a single, conditional clause. */
-  struct Clause {
-    /** Value constructor. */
-    Clause(
-        std::string&& field_name,
-        const void* const condition_value,
-        const uint64_t condition_value_size,
-        const QueryConditionOp op)
-        : field_name_(std::move(field_name))
-        , op_(op) {
-      condition_value_data_.resize(condition_value_size);
-      condition_value_ =
-          condition_value == nullptr ? nullptr : condition_value_data_.data();
-      if (condition_value != nullptr) {
-        memcpy(
-            condition_value_data_.data(),
-            condition_value,
-            condition_value_size);
-      }
-    };
+    Params() = delete;
 
-    /** Copy constructor. */
-    Clause(const Clause& rhs)
-        : field_name_(rhs.field_name_)
-        , condition_value_data_(rhs.condition_value_data_)
-        , condition_value_(
-              rhs.condition_value_ == nullptr ? nullptr :
-                                                condition_value_data_.data())
-        , op_(rhs.op_){};
-
-    /** Move constructor. */
-    Clause(Clause&& rhs)
-        : field_name_(std::move(rhs.field_name_))
-        , condition_value_data_(std::move(rhs.condition_value_data_))
-        , condition_value_(
-              rhs.condition_value_ == nullptr ? nullptr :
-                                                condition_value_data_.data())
-        , op_(rhs.op_){};
-
-    /** Assignment operator. */
-    Clause& operator=(const Clause& rhs) {
-      field_name_ = rhs.field_name_;
-      condition_value_data_ = rhs.condition_value_data_;
-      condition_value_ = rhs.condition_value_ == nullptr ?
-                             nullptr :
-                             condition_value_data_.data();
-      op_ = rhs.op_;
-
-      return *this;
+    /** Constructor setting all parameters. */
+    Params(
+        shared_ptr<MemoryTracker> memory_tracker,
+        const ArraySchema& array_schema)
+        : memory_tracker_(memory_tracker)
+        , schema_(array_schema) {
     }
 
-    /** Move-assignment operator. */
-    Clause& operator=(Clause&& rhs) {
-      field_name_ = std::move(rhs.field_name_);
-      condition_value_data_ = std::move(rhs.condition_value_data_);
-      condition_value_ = rhs.condition_value_ == nullptr ?
-                             nullptr :
-                             condition_value_data_.data();
-      op_ = rhs.op_;
+    /* ********************************* */
+    /*                API                */
+    /* ********************************* */
 
-      return *this;
+    /** Returns the memory tracker. */
+    shared_ptr<MemoryTracker> GetMemoryTracker() const {
+      return memory_tracker_;
     }
 
-    /** The attribute name. */
-    std::string field_name_;
+    /** Returns the array schema. */
+    const ArraySchema& GetSchema() const {
+      return schema_;
+    }
 
-    /** The value data. */
-    ByteVecValue condition_value_data_;
+   private:
+    /* ********************************* */
+    /*         PRIVATE ATTRIBUTES        */
+    /* ********************************* */
 
-    /** The value to compare against. */
-    void* condition_value_;
+    /** Memory tracker. */
+    shared_ptr<MemoryTracker> memory_tracker_;
 
-    /** The comparison operator. */
-    QueryConditionOp op_;
+    /** Array schema. */
+    const ArraySchema& schema_;
   };
 
   /* ********************************* */
   /*     CONSTRUCTORS & DESTRUCTORS    */
   /* ********************************* */
 
-  /** Default constructor. */
+  /** Default constructor. Should be used only in the C API. */
   QueryCondition();
+
+  /** Constructor for a set membership QueryCondition. */
+  QueryCondition(
+      const std::string& field_name,
+      const void* data,
+      uint64_t data_size,
+      const void* offsets,
+      uint64_t offsets_size,
+      QueryConditionOp op);
+
+  /** Constructor from a marker. */
+  QueryCondition(const std::string& condition_marker);
+
+  /** Constructor from a tree. */
+  QueryCondition(tdb_unique_ptr<tiledb::sm::ASTNode>&& tree);
+
+  /** Constructor from a tree and marker. */
+  QueryCondition(
+      const uint64_t condition_index,
+      const std::string& condition_marker,
+      tdb_unique_ptr<tiledb::sm::ASTNode>&& tree);
 
   /** Copy constructor. */
   QueryCondition(const QueryCondition& rhs);
@@ -173,7 +169,16 @@ class QueryCondition {
       std::string&& field_name,
       const void* condition_value,
       uint64_t condition_value_size,
-      QueryConditionOp op);
+      const QueryConditionOp& op);
+
+  /**
+   * Translate any query conditions against enumerated attributes to the
+   * underlying attribute type.
+   *
+   * @param array_schema The current array schema with all required enumerations
+   * loaded.
+   */
+  void rewrite_enumeration_conditions(const ArraySchema& array_schema);
 
   /**
    * Verifies that the current state contains supported comparison
@@ -184,7 +189,7 @@ class QueryCondition {
    * @param array_schema The current array schena.
    * @return Status
    */
-  Status check(const ArraySchema* array_schema) const;
+  Status check(const ArraySchema& array_schema) const;
 
   /**
    * Combines this instance with the right-hand-side instance by
@@ -202,91 +207,122 @@ class QueryCondition {
       QueryCondition* combined_cond) const;
 
   /**
-   * Returns true if this condition does not have any conditional clauses.
+   * @brief API call to negate query condition.
+   *
+   * @param combined_cond Where the negated condition is stored.
+   * @return Status
+   */
+  Status negate(
+      QueryConditionCombinationOp combination_op,
+      QueryCondition* combined_cond) const;
+
+  /**
+   * Returns true if this condition does not have any nodes in the AST
+   * representing the query condition.
    */
   bool empty() const;
 
   /**
-   * Returns a set of all unique field names among the conditional clauses.
+   * Returns a set of all unique field names among the value nodes in the AST
+   * representing the query condition.
    */
-  std::unordered_set<std::string> field_names() const;
+  std::unordered_set<std::string>& field_names() const;
+
+  /**
+   * Returns a set of all unique field names that reference an enumerated
+   * attribute condition in the AST representing the query condition.
+   */
+  std::unordered_set<std::string>& enumeration_field_names() const;
+
+  /**
+   * Returns the timestamp for this condition.
+   */
+  uint64_t condition_timestamp() const;
 
   /**
    * Applies this query condition to `result_cell_slabs`.
    *
-   * @param array_schema The array schema associated with `result_cell_slabs`.
+   * @param params Query condition parameters.
+   * @param fragment_metadata The fragment metadata.
    * @param result_cell_slabs The cell slabs to filter. Mutated to remove cell
    *   slabs that do not meet the criteria in this query condition.
    * @param stride The stride between cells.
    * @return Status
    */
   Status apply(
-      const ArraySchema* array_schema,
-      std::vector<ResultCellSlab>* result_cell_slabs,
+      const QueryCondition::Params& params,
+      const std::vector<shared_ptr<FragmentMetadata>>& fragment_metadata,
+      std::vector<ResultCellSlab>& result_cell_slabs,
       uint64_t stride) const;
 
   /**
    * Applies this query condition to a set of cells.
    *
-   * @param array_schema The array schema.
+   * @param params Query condition parameters.
    * @param result_tile The result tile to get the cells from.
    * @param start The start cell.
    * @param length The number of cells to process.
    * @param src_cell The cell offset in the source tile.
    * @param stride The stride between cells.
+   * @param cell_slab_coords The cell slab coordinates.
    * @param result_buffer The buffer to use for results.
    * @return Status
    */
-  template <typename T>
   Status apply_dense(
-      const ArraySchema* const array_schema,
+      const QueryCondition::Params& params,
       ResultTile* result_tile,
       const uint64_t start,
       const uint64_t length,
       const uint64_t src_cell,
       const uint64_t stride,
+      const void* cell_slab_coords,
       uint8_t* result_buffer);
 
   /**
    * Applies this query condition to a set of cells.
    *
-   * @param array_schema The array schema.
+   * @param params Query condition parameters.
    * @param result_tile The result tile to get the cells from.
    * @param result_bitmap The bitmap to use for results.
-   * @param cell_count The cell count after condition is applied.
    * @return Status
    */
-  template <typename T, typename BitmapType>
+  template <typename BitmapType>
   Status apply_sparse(
-      const ArraySchema* const array_schema,
-      ResultTile* result_tile,
-      BitmapType* result_bitmap,
-      uint64_t* cell_count);
+      const QueryCondition::Params& params,
+      ResultTile& result_tile,
+      tdb::pmr::vector<BitmapType>& result_bitmap);
 
   /**
-   * Sets the clauses. This is internal state to only be used in
-   * the serialization path.
+   * Reverse the query condition using De Morgan's law.
    */
-  void set_clauses(std::vector<Clause>&& clauses);
+  QueryCondition negated_condition();
 
   /**
-   * Sets the combination ops. This is internal state to only be used in
-   * the serialization path.
+   * Returns the AST object. This is internal state to only be used in testing
+   * and the serialization path.
    */
-  void set_combination_ops(
-      std::vector<QueryConditionCombinationOp>&& combination_ops);
+  const tdb_unique_ptr<ASTNode>& ast() const;
 
   /**
-   * Returns the clauses. This is internal state to only be used in
-   * the serialization path.
+   * Returns the condition marker.
    */
-  std::vector<Clause> clauses() const;
+  const std::string& condition_marker() const;
 
   /**
-   * Returns the combination ops. This is internal state to only be used in
-   * the serialization path.
+   * Returns the condition index.
    */
-  std::vector<QueryConditionCombinationOp> combination_ops() const;
+  uint64_t condition_index() const;
+
+  /**
+   * By default, a query condition is applied against the enumerated values
+   * of an attribute. Setting use_enumeration to false prevents the translation
+   * and applies this query condition directly against the underlying integral
+   * attribute data.
+   *
+   * @param use_enumeration A bool indicating whether to use the enumeration
+   *        values.
+   */
+  void set_use_enumeration(bool use_enumeration);
 
  private:
   /* ********************************* */
@@ -297,233 +333,366 @@ class QueryCondition {
    * Performs a binary comparison between two primitive types.
    * We use a `struct` here because it can support partial
    * template specialization while a standard function does not.
+   *
+   * Note that this comparator includes if statements that will
+   * prevent vectorization.
+   */
+  template <typename T, QueryConditionOp Cmp>
+  struct BinaryCmpNullChecks;
+
+  /**
+   * Performs a binary comparison between two primitive types.
+   * We use a `struct` here because it can support partial
+   * template specialization while a standard function does not.
    */
   template <typename T, QueryConditionOp Cmp>
   struct BinaryCmp;
 
+  /**
+   * Performs dense condition on dimensions.
+   */
+  template <
+      typename T,
+      QueryConditionOp Op,
+      typename CombinationOp,
+      typename Enable = T>
+  struct DenseDimCondition;
+
   /* ********************************* */
   /*         PRIVATE ATTRIBUTES        */
   /* ********************************* */
+  /** Marker used to reference which file the condition came from. */
+  std::string condition_marker_;
 
-  /**
-   * All clauses in this condition. Clauses `clauses_[i]` and
-   * `clauses_[i + 1]` are combined by the `combination_ops_[i]`
-   * operator.
-   */
-  std::vector<Clause> clauses_;
+  /** Index for the condition. */
+  size_t condition_index_;
 
-  /** Caches all field names in `clauses_`.  */
+  /** AST Tree structure representing the condition. **/
+  tdb_unique_ptr<tiledb::sm::ASTNode> tree_{};
+
+  /** Caches all field names in the value nodes of the AST.  */
   mutable std::unordered_set<std::string> field_names_;
 
-  /** Logical operators to combine clauses stored in `clauses_`. */
-  std::vector<QueryConditionCombinationOp> combination_ops_;
+  /** Caches all field names that references enumerations in the AST. */
+  mutable std::unordered_set<std::string> enumeration_field_names_;
 
   /* ********************************* */
   /*          PRIVATE METHODS          */
   /* ********************************* */
 
   /**
-   * Applies a clause on primitive-typed result cell slabs,
+   * Applies a value node on primitive-typed result cell slabs,
    * templated for a query condition operator.
    *
-   * @param clause The clause to apply.
+   * @param node The value node to apply.
+   * @param fragment_metadata The fragment metadata.
    * @param stride The stride between cells.
    * @param var_size The attribute is var sized or not.
    * @param nullable The attribute is nullable or not.
    * @param fill_value The fill value for the cells.
-   * @param result_cell_slabs The input cell slabs.
-   * @param out_result_cell_slabs The filtered cell slabs.
+   * @param combination_op The combination op.
+   * @param result_cell_bitmap The input cell bitmap.
+   * @return The filtered cell slabs.
    */
-  template <typename T, QueryConditionOp Op>
-  void apply_clause(
-      const Clause& clause,
+  template <typename T, QueryConditionOp Op, typename CombinationOp>
+  void apply_ast_node(
+      const tdb_unique_ptr<ASTNode>& node,
+      const std::vector<shared_ptr<FragmentMetadata>>& fragment_metadata,
       uint64_t stride,
       const bool var_size,
       const bool nullable,
       const ByteVecValue& fill_value,
       const std::vector<ResultCellSlab>& result_cell_slabs,
-      std::vector<ResultCellSlab>* out_result_cell_slabs) const;
+      CombinationOp combination_op,
+      tdb::pmr::vector<uint8_t>& result_cell_bitmap) const;
 
   /**
-   * Applies a clause on primitive-typed result cell slabs.
+   * Applies a value node on primitive-typed result cell slabs.
    *
-   * @param clause The clause to apply.
+   * @param node The value node to apply.
+   * @param fragment_metadata The fragment metadata.
    * @param stride The stride between cells.
    * @param var_size The attribute is var sized or not.
    * @param nullable The attribute is nullable or not.
    * @param fill_value The fill value for the cells.
-   * @param result_cell_slabs The input cell slabs.
-   * @param out_result_cell_slabs The filtered cell slabs.
+   * @param combination_op The combination op.
+   * @param result_cell_bitmap The input cell bitmap.
+   * @return Status, filtered cell slabs.
    */
-  template <typename T>
-  Status apply_clause(
-      const Clause& clause,
+  template <typename T, typename CombinationOp>
+  void apply_ast_node(
+      const tdb_unique_ptr<ASTNode>& node,
+      const std::vector<shared_ptr<FragmentMetadata>>& fragment_metadata,
       uint64_t stride,
       const bool var_size,
       const bool nullable,
       const ByteVecValue& fill_value,
       const std::vector<ResultCellSlab>& result_cell_slabs,
-      std::vector<ResultCellSlab>* out_result_cell_slabs) const;
+      CombinationOp combination_op,
+      tdb::pmr::vector<uint8_t>& result_cell_bitmap) const;
 
   /**
-   * Applies a clause to filter result cells from the input
+   * Applies a value node to filter result cells from the input
    * result cell slabs.
    *
-   * @param clause The clause to apply.
+   * @param node The value node to apply.
    * @param array_schema The current array schema.
+   * @param fragment_metadata The fragment metadata.
    * @param stride The stride between cells.
-   * @param result_cell_slabs The input cell slabs.
-   * @param out_result_cell_slabs The filtered cell slabs.
+   * @param combination_op The combination op.
+   * @param result_cell_bitmap The input cell bitmap.
+   * @return Status, filtered cell slabs.
    */
-  Status apply_clause(
-      const QueryCondition::Clause& clause,
-      const ArraySchema* const array_schema,
+  template <typename CombinationOp>
+  void apply_ast_node(
+      const tdb_unique_ptr<ASTNode>& node,
+      const ArraySchema& array_schema,
+      const std::vector<shared_ptr<FragmentMetadata>>& fragment_metadata,
       uint64_t stride,
       const std::vector<ResultCellSlab>& result_cell_slabs,
-      std::vector<ResultCellSlab>* out_result_cell_slabs) const;
+      CombinationOp combination_op,
+      tdb::pmr::vector<uint8_t>& result_cell_bitmap) const;
 
   /**
-   * Applies a clause on a dense result tile,
+   * Applies the query condition represented with the AST to
+   * `result_cell_slabs`.
+   *
+   * @param node The node to apply.
+   * @param params Query condition parameters.
+   * @param fragment_metadata The fragment metadata.
+   * @param stride The stride between cells.
+   * @param combination_op The combination op.
+   * @param result_cell_bitmap A bitmap representation of cell slabs to filter.
+   * Mutated to remove cell slabs that do not meet the criteria in this query
+   * condition.
+   * @return Filtered cell slabs.
+   */
+  template <typename CombinationOp = std::logical_and<uint8_t>>
+  void apply_tree(
+      const tdb_unique_ptr<ASTNode>& node,
+      const QueryCondition::Params& params,
+      const std::vector<shared_ptr<FragmentMetadata>>& fragment_metadata,
+      uint64_t stride,
+      const std::vector<ResultCellSlab>& result_cell_slabs,
+      CombinationOp combination_op,
+      tdb::pmr::vector<uint8_t>& result_cell_bitmap) const;
+
+  /**
+   * Applies a value node on a dense result tile,
    * templated for a query condition operator.
    *
-   * @param clause The clause to apply.
+   * @param node The value node to apply.
+   * @param array_schema The array schema.
    * @param result_tile The result tile to get the cells from.
    * @param start The start cell.
-   * @param length The number of cells to process.
    * @param src_cell The cell offset in the source tile.
    * @param stride The stride between cells.
    * @param var_size The attribute is var sized or not.
    * @param nullable The attribute is nullable or not.
-   * @param previous_result_bitmask The bitmask to get the previous result.
-   * @param current_result_bitmask The bitmask to set the current result.
+   * @param combination_op The combination op.
+   * @param cell_slab_coords The cell slab coordinates.
    * @param result_buffer The result buffer.
    */
-  template <typename T, QueryConditionOp Op>
-  void apply_clause_dense(
-      const QueryCondition::Clause& clause,
+  template <typename T, QueryConditionOp Op, typename CombinationOp>
+  void apply_ast_node_dense(
+      const tdb_unique_ptr<ASTNode>& node,
+      const ArraySchema& array_schema,
       ResultTile* result_tile,
       const uint64_t start,
-      const uint64_t length,
       const uint64_t src_cell,
       const uint64_t stride,
       const bool var_size,
       const bool nullable,
-      const uint8_t previous_result_bitmask,
-      const uint8_t current_result_bitmask,
-      uint8_t* result_buffer) const;
+      CombinationOp combination_op,
+      const void* cell_slab_coords,
+      span<uint8_t> result_buffer) const;
 
   /**
-   * Applies a clause on a dense result tile.
+   * Applies a value node on a dense result tile.
    *
-   * @param clause The clause to apply.
+   * @param node The node to apply.
+   * @param array_schema The array schema.
    * @param result_tile The result tile to get the cells from.
    * @param start The start cell.
-   * @param length The number of cells to process.
    * @param src_cell The cell offset in the source tile.
    * @param stride The stride between cells.
    * @param var_size The attribute is var sized or not.
    * @param nullable The attribute is nullable or not.
-   * @param previous_result_bitmask The bitmask to get the previous result.
-   * @param current_result_bitmask The bitmask to set the current result.
+   * @param combination_op The combination op.
+   * @param cell_slab_coords The cell slab coordinates.
    * @param result_buffer The result buffer.
+   * @return Status.
    */
-  template <typename T>
-  Status apply_clause_dense(
-      const Clause& clause,
+  template <typename T, typename CombinationOp>
+  void apply_ast_node_dense(
+      const tdb_unique_ptr<ASTNode>& node,
+      const ArraySchema& array_schema,
       ResultTile* result_tile,
       const uint64_t start,
-      const uint64_t length,
       const uint64_t src_cell,
       const uint64_t stride,
       const bool var_size,
       const bool nullable,
-      const uint8_t previous_result_bitmask,
-      const uint8_t current_result_bitmask,
-      uint8_t* result_buffer) const;
+      CombinationOp combination_op,
+      const void* cell_slab_coords,
+      span<uint8_t> result_buffer) const;
 
   /**
-   * Applies a clause to filter result cells from the input
+   * Applies a value node to filter result cells from the input
    * result tile.
    *
-   * @param clause The clause to apply.
+   * @param node The node to apply.
    * @param array_schema The current array schema.
    * @param result_tile The result tile to get the cells from.
    * @param start The start cell.
-   * @param length The number of cells to process.
    * @param src_cell The cell offset in the source tile.
    * @param stride The stride between cells.
-   * @param previous_result_bitmask The bitmask to get the previous result.
-   * @param current_result_bitmask The bitmask to set the current result.
+   * @param combination_op The combination op.
+   * @param  The cell slab coordinates.
    * @param result_buffer The result buffer.
+   * @return Status.
    */
-  Status apply_clause_dense(
-      const QueryCondition::Clause& clause,
-      const ArraySchema* const array_schema,
+  template <typename CombinationOp>
+  void apply_ast_node_dense(
+      const tdb_unique_ptr<ASTNode>& node,
+      const ArraySchema& array_schema,
       ResultTile* result_tile,
       const uint64_t start,
-      const uint64_t length,
       const uint64_t src_cell,
       const uint64_t stride,
-      const uint8_t previous_result_bitmask,
-      const uint8_t current_result_bitmask,
-      uint8_t* result_buffer) const;
+      CombinationOp combination_op,
+      const void* cell_slab_coords,
+      span<uint8_t> result_buffer) const;
 
   /**
-   * Applies a clause on a sparse result tile,
+   * Applies the query condition represented with the AST to a set of cells.
+   *
+   * @param node The node to apply.
+   * @param params Query condition parameters.
+   * @param result_tile The result tile to get the cells from.
+   * @param start The start cell.
+   * @param src_cell The cell offset in the source tile.
+   * @param stride The stride between cells.
+   * @param combination_op The combination op.
+   * @param cell_slab_coords The cell slab coordinates.
+   * @param result_buffer The buffer to use for results.
+   * @return Void.
+   */
+  template <typename CombinationOp = std::logical_and<uint8_t>>
+  void apply_tree_dense(
+      const tdb_unique_ptr<ASTNode>& node,
+      const QueryCondition::Params& params,
+      ResultTile* result_tile,
+      const uint64_t start,
+      const uint64_t src_cell,
+      const uint64_t stride,
+      CombinationOp combination_op,
+      const void* cell_slab_coords,
+      span<uint8_t> result_buffer) const;
+
+  /**
+   * Applies a value node on a sparse result tile,
    * templated for a query condition operator.
    *
-   * @param clause The clause to apply.
+   * @param node The node to apply.
    * @param result_tile The result tile to get the cells from.
    * @param var_size The attribute is var sized or not.
-   * @param nullable The attribute is nullable or not.
+   * @param combination_op The combination op.
    * @param result_bitmap The result bitmap.
-   * @param cell_count The cell count after condition is applied.
    */
-  template <typename T, QueryConditionOp Op, typename BitmapType>
-  void apply_clause_sparse(
-      const QueryCondition::Clause& clause,
-      ResultTile* result_tile,
+  template <
+      typename T,
+      QueryConditionOp Op,
+      typename BitmapType,
+      typename CombinationOp,
+      typename nullable>
+  void apply_ast_node_sparse(
+      const tdb_unique_ptr<ASTNode>& node,
+      ResultTile& result_tile,
       const bool var_size,
-      const bool nullable,
-      BitmapType* result_bitmap,
-      uint64_t* cell_count) const;
+      CombinationOp combination_op,
+      tdb::pmr::vector<BitmapType>& result_bitmap) const;
 
   /**
-   * Applies a clause on a sparse result tile.
+   * Applies a value node on a sparse result tile,
+   * templated on the nullable operator.
    *
-   * @param clause The clause to apply.
+   * @param node The node to apply.
+   * @param result_tile The result tile to get the cells from.
+   * @param var_size The attribute is var sized or not.
+   * @param combination_op The combination op.
+   * @param result_bitmap The result bitmap.
+   * @return Status.
+   */
+  template <
+      typename T,
+      typename BitmapType,
+      typename CombinationOp,
+      typename nullable>
+  void apply_ast_node_sparse(
+      const tdb_unique_ptr<ASTNode>& node,
+      ResultTile& result_tile,
+      const bool var_size,
+      CombinationOp combination_op,
+      tdb::pmr::vector<BitmapType>& result_bitmap) const;
+
+  /**
+   * Applies a value node on a sparse result tile.
+   *
+   * @param node The node to apply.
    * @param result_tile The result tile to get the cells from.
    * @param var_size The attribute is var sized or not.
    * @param nullable The attribute is nullable or not.
+   * @param combination_op The combination op.
    * @param result_bitmap The result bitmap.
-   * @param cell_count The cell count after condition is applied.
    */
-  template <typename T, typename BitmapType>
-  Status apply_clause_sparse(
-      const Clause& clause,
-      ResultTile* result_tile,
+  template <typename T, typename BitmapType, typename CombinationOp>
+  void apply_ast_node_sparse(
+      const tdb_unique_ptr<ASTNode>& node,
+      ResultTile& result_tile,
       const bool var_size,
       const bool nullable,
-      BitmapType* result_bitmap,
-      uint64_t* cell_count) const;
+      CombinationOp combination_op,
+      tdb::pmr::vector<BitmapType>& result_bitmap) const;
 
   /**
-   * Applies a clause to filter result cells from the input
+   * Applies a value node to filter result cells from the input
    * result tile.
    *
-   * @param clause The clause to apply.
+   * @param node The node to apply.
    * @param array_schema The current array schema.
    * @param result_tile The result tile to get the cells from.
+   * @param combination_op The combination op.
    * @param result_bitmap The result bitmap.
-   * @param cell_count The cell count after condition is applied.
+   * @return Status.
    */
-  template <typename BitmapType>
-  Status apply_clause_sparse(
-      const QueryCondition::Clause& clause,
-      const ArraySchema* const array_schema,
-      ResultTile* result_tile,
-      BitmapType* result_bitmap,
-      uint64_t* cell_count) const;
+  template <typename BitmapType, typename CombinationOp>
+  void apply_ast_node_sparse(
+      const tdb_unique_ptr<ASTNode>& node,
+      const ArraySchema& array_schema,
+      ResultTile& result_tile,
+      CombinationOp combination_op,
+      tdb::pmr::vector<BitmapType>& result_bitmap) const;
+
+  /**
+   * Applies the query condition represented with the AST to a set of cells.
+   *
+   * @param node The node to apply.
+   * @param params Query condition parameters.
+   * @param result_tile The result tile to get the cells from.
+   * @param combination_op The combination op.
+   * @param result_bitmap The bitmap to use for results.
+   * @return Void.
+   */
+  template <
+      typename BitmapType,
+      typename CombinationOp = std::logical_and<BitmapType>>
+  void apply_tree_sparse(
+      const tdb_unique_ptr<ASTNode>& node,
+      const QueryCondition::Params& params,
+      ResultTile& result_tile,
+      CombinationOp combination_op,
+      tdb::pmr::vector<BitmapType>& result_bitmap) const;
 };
 
 }  // namespace sm

@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2023 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,18 +33,35 @@
 #ifndef TILEDB_CONFIG_H
 #define TILEDB_CONFIG_H
 
-#include "tiledb/common/status.h"
-#include "tiledb/sm/misc/utils.h"
-
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "tiledb/common/status.h"
+
+/*
+ * C++14 introduced the attribute [[deprecated]], but no conditional syntax
+ * for it. In order to turn it on only when we want it, we have to use the
+ * preprocessor.
+ */
+#if defined(TILEDB_DEPRECATE_OLD_CONFIG_GET)
+/*
+ * Old versions of `Config::get` don't obey the "outputs on the left" principle,
+ * or return `Status`, or both.
+ */
+#define TILEDB_DEPRECATE_CONFIG \
+  [[deprecated(                 \
+      "Instead use the single-argument version that returns `optional`")]]
+#else
+#define TILEDB_DEPRECATE_CONFIG
+#endif
+
 using namespace tiledb::common;
 
-namespace tiledb {
-namespace sm {
+namespace tiledb::sm {
+
+class WhiteboxConfig;
 
 /**
  * This class manages the TileDB configuration options.
@@ -52,6 +69,12 @@ namespace sm {
  * Parsing to appropriate types happens on demand.
  */
 class Config {
+  friend class ConfigIter;
+  /**
+   * WhiteboxConfig makes available internals of Config for testing.
+   */
+  friend class WhiteboxConfig;
+
  public:
   /* ****************************** */
   /*        CONFIG DEFAULTS         */
@@ -78,18 +101,66 @@ class Config {
   /** The default exponential delay factor for retrying a http request. */
   static const std::string REST_RETRY_DELAY_FACTOR;
 
+  /** The default buffer size for curl reads used by REST. */
+  static const std::string REST_CURL_BUFFER_SIZE;
+
+  /** CAPNP traversal limit used in the deserialization of messages(MB). */
+  static const std::string REST_CAPNP_TRAVERSAL_LIMIT;
+
+  /** The default for Curl's verbose mode used by REST. */
+  static const std::string REST_CURL_VERBOSE;
+
+  /** Whether to use TCP keepalive when connecting to REST. */
+  static const std::string REST_CURL_TCP_KEEPALIVE;
+
+  /** If we should retry Curl errors in requests to REST. */
+  static const std::string REST_CURL_RETRY_ERRORS;
+
+  /**
+   * If the array enumerations should be loaded on array open for the latest
+   * array schema only.
+   */
+  static const std::string REST_LOAD_ENUMERATIONS_ON_ARRAY_OPEN;
+
+  /**
+   * If the array enumerations should be loaded on array open for all array
+   * schemas.
+   */
+  static const std::string REST_LOAD_ENUMERATIONS_ON_ARRAY_OPEN_ALL_SCHEMAS;
+
+  /** If the array metadata should be loaded on array open */
+  static const std::string REST_LOAD_METADATA_ON_ARRAY_OPEN;
+
+  /** If the array non empty domain should be loaded on array open */
+  static const std::string REST_LOAD_NON_EMPTY_DOMAIN_ON_ARRAY_OPEN;
+
+  /** Refactored array open is disabled by default */
+  static const std::string REST_USE_REFACTORED_ARRAY_OPEN;
+
+  /** Refactored query submit is disabled by default */
+  static const std::string REST_USE_REFACTORED_QUERY_SUBMIT;
+
+  /** The namespace that should be charged for the request. */
+  static const std::string REST_PAYER_NAMESPACE;
+
   /** The prefix to use for checking for parameter environmental variables. */
   static const std::string CONFIG_ENVIRONMENT_VARIABLE_PREFIX;
 
   /**
    * The default logging level. It can be:
-   * - `1` i.e. `error` if bootstrap flag --enalbe-verbose is given
+   * - `1` i.e. `error` if bootstrap flag --enable-verbose is given
    * - `0` i.e. `fatal` if this bootstrap flag is missing
    */
   static const std::string CONFIG_LOGGING_LEVEL;
 
   /** The default format for logging. */
   static const std::string CONFIG_LOGGING_DEFAULT_FORMAT;
+
+  /** Allow separate attribute writes or not. */
+  static const std::string SM_ALLOW_SEPARATE_ATTRIBUTE_WRITES;
+
+  /** Allow updates or not. */
+  static const std::string SM_ALLOW_UPDATES_EXPERIMENTAL;
 
   /**
    * The key for encrypted arrays.
@@ -129,11 +200,17 @@ class Config {
    */
   static const std::string SM_CHECK_GLOBAL_ORDER;
 
-  /** The tile cache size. */
-  static const std::string SM_TILE_CACHE_SIZE;
+  /**
+   * If `true`, merge overlapping Subarray ranges. Else, overlapping ranges
+   * will not be merged and multiplicities will be returned.
+   */
+  static const std::string SM_MERGE_OVERLAPPING_RANGES_EXPERIMENTAL;
 
   /** If `true`, bypass partitioning on estimated result sizes. */
   static const std::string SM_SKIP_EST_SIZE_PARTITIONING;
+
+  /** If `true`, bypass partitioning budget check for unary ranges. */
+  static const std::string SM_SKIP_UNARY_PARTITIONING_BUDGET_CHECK;
 
   /**
    * The maximum memory budget for producing the result (in bytes)
@@ -147,6 +224,9 @@ class Config {
    */
   static const std::string SM_MEMORY_BUDGET_VAR;
 
+  /** Set the dense reader in qc coords mode. */
+  static const std::string SM_QUERY_DENSE_QC_COORDS_MODE;
+
   /** Which reader to use for dense queries. */
   static const std::string SM_QUERY_DENSE_READER;
 
@@ -156,24 +236,26 @@ class Config {
   /** Which reader to use for sparse unordered with dups queries. */
   static const std::string SM_QUERY_SPARSE_UNORDERED_WITH_DUPS_READER;
 
-  /** Non overlapping ranges guaranteed for sparse unordered with dups queries.
-   */
-  static const std::string
-      SM_QUERY_SPARSE_UNORDERED_WITH_DUPS_NON_OVERLAPPING_RANGES;
-
   /** Should malloc_trim be called on query/ctx destructors. */
   static const std::string SM_MEM_MALLOC_TRIM;
+
+  /** Maximum tile memory budget for readers. */
+  static const std::string SM_UPPER_MEMORY_LIMIT;
 
   /** Maximum memory budget for readers and writers. */
   static const std::string SM_MEM_TOTAL_BUDGET;
 
+  /** Weight for consolidation buffers used to split total budget. */
+  static const std::string SM_MEM_CONSOLIDATION_BUFFERS_WEIGHT;
+
+  /** Weight for consolidation read query used to split total budget. */
+  static const std::string SM_MEM_CONSOLIDATION_READER_WEIGHT;
+
+  /** Weight for consolidation write query used to split total budget. */
+  static const std::string SM_MEM_CONSOLIDATION_WRITER_WEIGHT;
+
   /** Ratio of the sparse global order reader budget used for coords. */
   static const std::string SM_MEM_SPARSE_GLOBAL_ORDER_RATIO_COORDS;
-
-  /**
-   * Ratio of the sparse global order reader budget used for query condition.
-   */
-  static const std::string SM_MEM_SPARSE_GLOBAL_ORDER_RATIO_QUERY_CONDITION;
 
   /** Ratio of the sparse global order reader budget used for tile ranges. */
   static const std::string SM_MEM_SPARSE_GLOBAL_ORDER_RATIO_TILE_RANGES;
@@ -181,19 +263,8 @@ class Config {
   /** Ratio of the sparse global order reader budget used for array data. */
   static const std::string SM_MEM_SPARSE_GLOBAL_ORDER_RATIO_ARRAY_DATA;
 
-  /** Ratio of the sparse global order reader budget used for result cell slabs.
-   */
-  static const std::string SM_MEM_SPARSE_GLOBAL_ORDER_RATIO_RCS;
-
   /** Ratio of the sparse unordered with dups reader budget used for coords. */
   static const std::string SM_MEM_SPARSE_UNORDERED_WITH_DUPS_RATIO_COORDS;
-
-  /**
-   * Ratio of the sparse unordered with dups reader budget used for query
-   * condition.
-   */
-  static const std::string
-      SM_MEM_SPARSE_UNORDERED_WITH_DUPS_RATIO_QUERY_CONDITION;
 
   /**
    * Ratio of the sparse unordered with dups reader budget used for tile
@@ -233,6 +304,12 @@ class Config {
   /** The buffer size for each attribute used in consolidation. */
   static const std::string SM_CONSOLIDATION_BUFFER_SIZE;
 
+  /** The maximum fragment size used in consolidation. */
+  static const std::string SM_CONSOLIDATION_MAX_FRAGMENT_SIZE;
+
+  /** Purge deleted cells or not. */
+  static const std::string SM_CONSOLIDATION_PURGE_DELETED_CELLS;
+
   /** Number of steps in the consolidation algorithm. */
   static const std::string SM_CONSOLIDATION_STEPS;
 
@@ -254,18 +331,18 @@ class Config {
    *     - "fragments": only the fragments will be consolidated
    *     - "fragment_meta": only the fragment metadata will be consolidated
    *     - "array_meta": only the array metadata will be consolidated
-
+   *     - "commits": only the commit files will be consolidated
    */
   static const std::string SM_CONSOLIDATION_MODE;
 
   /**
    * An array will consolidate between this value and timestamp_end.
-   * */
+   */
   static const std::string SM_CONSOLIDATION_TIMESTAMP_START;
 
   /**
    * An array will consolidate between timestamp_start and this value.
-   *  */
+   */
   static const std::string SM_CONSOLIDATION_TIMESTAMP_END;
 
   /**
@@ -273,22 +350,23 @@ class Config {
    *     - "fragments": only the fragments will be vacuumed
    *     - "fragment_meta": only the fragment metadata will be vacuumed
    *     - "array_meta": only the array metadata will be vacuumed
+   *     - "commits": only the commit files will be vacuumed
    */
   static const std::string SM_VACUUM_MODE;
 
   /**
    * An array will vacuum between this value and timestamp_end.
-   * */
+   */
   static const std::string SM_VACUUM_TIMESTAMP_START;
 
   /**
    * An array will vacuum between timestamp_start and this value.
-   *  */
+   */
   static const std::string SM_VACUUM_TIMESTAMP_END;
 
   /**
    * The size of offsets in bits to be used for offset buffers of var-sized
-   * attributes<br>
+   * attributes
    */
   static const std::string SM_OFFSETS_BITSIZE;
 
@@ -311,8 +389,46 @@ class Config {
    */
   static const std::string SM_MAX_TILE_OVERLAP_SIZE;
 
+  /**
+   * A group will open between this value and timestamp_end.
+   */
+  static const std::string SM_GROUP_TIMESTAMP_START;
+
+  /**
+   * An group will open between timestamp_start and this value.
+   */
+  static const std::string SM_GROUP_TIMESTAMP_END;
+
+  /**
+   * If `true` MBRs will be loaded at the same time as the rest of fragment
+   * info, otherwise they will be loaded lazily when some info related to MBRs
+   * is requested by the user
+   */
+  static const std::string SM_FRAGMENT_INFO_PRELOAD_MBRS;
+
+  /** If `true` the readers might partially load/unload tile offsets. */
+  static const std::string SM_PARTIAL_TILE_OFFSETS_LOADING;
+
+  /** The maximum size of a single enumeration. */
+  static const std::string SM_ENUMERATIONS_MAX_SIZE;
+
+  /** The maximum total size for all enumerations in a schema. */
+  static const std::string SM_ENUMERATIONS_MAX_TOTAL_SIZE;
+
+  /** Certificate file path. */
+  static const std::string SSL_CA_FILE;
+
+  /** Certificate directory path. */
+  static const std::string SSL_CA_PATH;
+
+  /** Whether to verify SSL connections. */
+  static const std::string SSL_VERIFY;
+
   /** The default minimum number of bytes in a parallel VFS operation. */
   static const std::string VFS_MIN_PARALLEL_SIZE;
+
+  /** The default maximum number of bytes in a batched VFS read operation. */
+  static const std::string VFS_MAX_BATCH_SIZE;
 
   /**
    * The default minimum number of bytes between two VFS read batches.
@@ -328,17 +444,17 @@ class Config {
   /** The default posix permissions for directory creations */
   static const std::string VFS_FILE_POSIX_DIRECTORY_PERMISSIONS;
 
-  /** The default maximum number of parallel file:/// operations. */
-  static const std::string VFS_FILE_MAX_PARALLEL_OPS;
-
-  /** Whether or not filelocks are enabled for VFS. */
-  static const std::string VFS_FILE_ENABLE_FILELOCKS;
-
   /** The maximum size (in bytes) to read-ahead in the VFS. */
   static const std::string VFS_READ_AHEAD_SIZE;
 
   /** The maximum size (in bytes) of the VFS read-ahead cache . */
   static const std::string VFS_READ_AHEAD_CACHE_SIZE;
+
+  /** Whether to log individual VFS operations. */
+  static const std::string VFS_LOG_OPERATIONS;
+
+  /** The type of read logging to perform in the VFS. */
+  static const std::string VFS_READ_LOGGING_MODE;
 
   /** Azure storage account name. */
   static const std::string VFS_AZURE_STORAGE_ACCOUNT_NAME;
@@ -352,9 +468,6 @@ class Config {
   /** Azure blob endpoint. */
   static const std::string VFS_AZURE_BLOB_ENDPOINT;
 
-  /** Azure use https. */
-  static const std::string VFS_AZURE_USE_HTTPS;
-
   /** Azure max parallel ops. */
   static const std::string VFS_AZURE_MAX_PARALLEL_OPS;
 
@@ -364,8 +477,29 @@ class Config {
   /** Azure use block list upload. */
   static const std::string VFS_AZURE_USE_BLOCK_LIST_UPLOAD;
 
+  /** Azure max retries. */
+  static const std::string VFS_AZURE_MAX_RETRIES;
+
+  /** Azure min retry delay. */
+  static const std::string VFS_AZURE_RETRY_DELAY_MS;
+
+  /** Azure max retry delay. */
+  static const std::string VFS_AZURE_MAX_RETRY_DELAY_MS;
+
+  /** GCS Endpoint. */
+  static const std::string VFS_GCS_ENDPOINT;
+
   /** GCS project id. */
   static const std::string VFS_GCS_PROJECT_ID;
+
+  /** GCS service account(s) to impersonate. */
+  static const std::string VFS_GCS_IMPERSONATE_SERVICE_ACCOUNT;
+
+  /** GCS service account key JSON string. */
+  static const std::string VFS_GCS_SERVICE_ACCOUNT_KEY;
+
+  /** GCS external account credentials JSON string. */
+  static const std::string VFS_GCS_WORKLOAD_IDENTITY_CONFIGURATION;
 
   /** GCS max parallel ops. */
   static const std::string VFS_GCS_MAX_PARALLEL_OPS;
@@ -378,6 +512,9 @@ class Config {
 
   /** GCS request timeout in milliseconds. */
   static const std::string VFS_GCS_REQUEST_TIMEOUT_MS;
+
+  /** GCS maximum buffer size for non-multipart uploads. */
+  static const std::string VFS_GCS_MAX_DIRECT_UPLOAD_SIZE;
 
   /** S3 region. */
   static const std::string VFS_S3_REGION;
@@ -445,6 +582,9 @@ class Config {
   /** The S3 KMS key id for KMS server-side-encryption. */
   static const std::string VFS_S3_SSE_KMS_KEY_ID;
 
+  /** The S3 storage class to upload objects to. */
+  static const std::string VFS_S3_STORAGE_CLASS;
+
   /** Request timeout in milliseconds. */
   static const std::string VFS_S3_REQUEST_TIMEOUT_MS;
 
@@ -472,6 +612,15 @@ class Config {
   /** Verify TLS/SSL certificates (true). */
   static const std::string VFS_S3_VERIFY_SSL;
 
+  /** Force making an unsigned request to s3 (false). */
+  static const std::string VFS_S3_NO_SIGN_REQUEST;
+
+  /**
+   * When set to `true`, the S3 SDK uses a handler that ignores SIGPIPE
+   * signals.
+   */
+  static const std::string VFS_S3_INSTALL_SIGPIPE_HANDLER;
+
   /** HDFS default kerb ticket cache path. */
   static const std::string VFS_HDFS_KERB_TICKET_CACHE_PATH;
 
@@ -487,9 +636,31 @@ class Config {
   /** S3 default object canned ACL */
   static const std::string VFS_S3_OBJECT_CANNED_ACL;
 
+  /**
+   * Force S3 SDK to only load config options from a set source.
+   * The supported options are
+   * - `auto` (TileDB config options are considered first,
+   *    then SDK-defined precedence: env vars, config files, ec2 metadata),
+   * - `config_files` (forces SDK to only consider options found in aws
+   *    config files),
+   *    `sts_profile_with_web_identity` (force SDK to consider assume roles/sts
+   * from config files with support for web tokens, commonly used by EKS/ECS).
+   */
+  static const std::string VFS_S3_CONFIG_SOURCE;
+
+  /**
+   * Specifies the size in bytes of the internal buffers used in the filestore
+   * API. The size should be bigger than the minimum tile size filestore
+   * currently supports, that is currently 1024bytes. */
+  static const std::string FILESTORE_BUFFER_SIZE;
+
   /* ****************************** */
   /*        OTHER CONSTANTS         */
   /* ****************************** */
+
+  /** Marker class to enforce value is found with Config::get overload */
+  class MustFindMarker {};
+  static constexpr MustFindMarker must_find{};
 
   /* ********************************* */
   /*     CONSTRUCTORS & DESTRUCTORS    */
@@ -515,18 +686,45 @@ class Config {
   Status set(const std::string& param, const std::string& value);
 
   /**
+   * Retrieve the string value of a configuration parameter and convert it to
+   * a designated type.
+   *
+   * @param key The name of the configuration parameter
+   * @return If a configuration item is present, its value. If not, `nullopt`.
+   */
+  template <class T>
+  [[nodiscard]] inline optional<T> get(const std::string& key) const {
+    return get_internal<T, false>(key);
+  }
+
+  /**
+   * Retrieves the value of the given parameter in the templated type.
+   * Throws StatusException if config value could not be found
+   *
+   * @param key The name of the configuration parameter
+   * @return The value of the configuration parameter
+   */
+  template <class T>
+  inline T get(const std::string& key, const MustFindMarker&) const {
+    return get_internal<T, true>(key).value();
+  }
+
+  /**
    * Returns the string representation of a config parameter value.
    * Sets `found` to `true` if found and `false` otherwise.
    */
+  TILEDB_DEPRECATE_CONFIG
   std::string get(const std::string& param, bool* found) const;
 
   /** Gets a config parameter value (`nullptr` if `param` does not exist). */
+  TILEDB_DEPRECATE_CONFIG
   Status get(const std::string& param, const char** value) const;
 
   /**
    * Retrieves the value of the given parameter in the templated type.
    * Sets `found` to `true` if found and `false` otherwise.
    */
+  TILEDB_DEPRECATE_CONFIG
   template <class T>
   Status get(const std::string& param, T* value, bool* found) const;
 
@@ -536,18 +734,7 @@ class Config {
    */
   template <class T>
   Status get_vector(
-      const std::string& param, std::vector<T>* value, bool* found) const {
-    // Check if parameter exists
-    const char* val = get_from_config_or_env(param, found);
-    if (!*found)
-      return Status::Ok();
-
-    // Parameter found, retrieve value
-    return utils::parse::convert<T>(val, value);
-  }
-
-  /** Returns the param -> value map. */
-  const std::map<std::string, std::string>& param_values() const;
+      const std::string& param, std::vector<T>* value, bool* found) const;
 
   /** Gets the set parameters. */
   const std::set<std::string>& set_params() const;
@@ -562,6 +749,10 @@ class Config {
 
   /** Compares configs for equality. */
   bool operator==(const Config& rhs) const;
+
+  /** Get all config params taking into account environment variables */
+  const std::map<std::string, std::string> get_all_params_from_config_or_env()
+      const;
 
  private:
   /* ********************************* */
@@ -633,9 +824,42 @@ class Config {
    */
   const char* get_from_config_or_env(
       const std::string& param, bool* found) const;
+
+  template <class T, bool must_find_>
+  optional<T> get_internal(const std::string& key) const;
+
+  template <bool must_find_>
+  optional<std::string> get_internal_string(const std::string& key) const;
+
+  /** Returns the param -> value map. */
+  const std::map<std::string, std::string>& param_values() const;
 };
 
-}  // namespace sm
-}  // namespace tiledb
+/**
+ * An explicit specialization for `std::string`. It does not call a conversion
+ * function and it is thus the same as `get_internal_string<false>`.
+ */
+template <>
+[[nodiscard]] inline optional<std::string> Config::get<std::string>(
+    const std::string& key) const {
+  return get_internal_string<false>(key);
+}
+
+/**
+ * An explicit specialization for `std::string`. It does not call a conversion
+ * function and it is thus the same as `get_internal_string<true>`
+ *
+ * Will throw if value is not found for provided config key
+ */
+template <>
+inline std::string Config::get<std::string>(
+    const std::string& key, const Config::MustFindMarker&) const {
+  return get_internal_string<true>(key).value();
+}
+}  // namespace tiledb::sm
+
+#ifdef TILEDB_DEPRECATE_CONFIG
+#undef TILEDB_DEPRECATE_CONFIG
+#endif
 
 #endif  // TILEDB_CONFIG_H

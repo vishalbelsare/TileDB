@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,9 +33,11 @@
 #ifndef TILEDB_TILE_H
 #define TILEDB_TILE_H
 
-#include "tiledb/common/status.h"
+#include "tiledb/common/common.h"
+#include "tiledb/common/pmr.h"
 #include "tiledb/sm/array_schema/attribute.h"
-#include "tiledb/sm/buffer/buffer.h"
+#include "tiledb/sm/tile/filtered_buffer.h"
+#include "tiledb/storage_format/serialization/serializers.h"
 
 #include <cinttypes>
 
@@ -44,253 +46,79 @@ using namespace tiledb::common;
 namespace tiledb {
 namespace sm {
 
+class MemoryTracker;
+
 /**
- * Handles tile information. A tile can be in main memory if it has been
- * fetched from the disk or has been mmap-ed from a file. However, a tile
- * can be solely on the disk, in which case the Tile object stores the
- * offset in the file where the tile data begin, plus the tile size.
+ * Base class for common code between Tile and WriterTile objects.
  */
-class Tile {
+class TileBase {
  public:
   /**
-   * Computes the chunk size for a tile.
-   *
-   * @param tile_size The total size of the tile.
-   * @param tile_dim_num The number of coordinate dimensions.
-   * @param tile_cell_size The cell size.
-   * @param chunk_size Mutates to the calculated chunk size.
-   * @return Status
-   */
-  static Status compute_chunk_size(
-      const uint64_t tile_size,
-      const uint32_t tile_dim_num,
-      const uint64_t tile_cell_size,
-      uint32_t* const chunk_size);
-
-  /* ********************************* */
-  /*     CONSTRUCTORS & DESTRUCTORS    */
-  /* ********************************* */
-
-  /** Constructor. */
-  Tile();
-
-  /**
    * Constructor.
    *
-   * @param type The type of the data to be stored.
+   * @param format_version The format version.
+   * @param type The data type.
    * @param cell_size The cell size.
-   * @param dim_num The number of dimensions in case the tile stores
-   *      coordinates.
-   * @param Buffer The buffer to be encapsulated by the tile object. This means
-   *     that the tile will not create a new Buffer object, but operate
-   *     on the input.
-   * @param owns_buff If *true* the tile object will delete *buffer_* upon
-   *     destruction, otherwise it will not delete it.
+   * @param size The size of the tile.
+   * @param resource The memory resource to use.
    */
-  Tile(
-      Datatype type,
-      uint64_t cell_size,
-      unsigned int dim_num,
-      Buffer* buffer,
-      bool owns_buff);
+  TileBase(
+      const format_version_t format_version,
+      const Datatype type,
+      const uint64_t cell_size,
+      const uint64_t size,
+      tdb::pmr::memory_resource* resource);
 
-  /**
-   * Constructor.
-   *
-   * @param format_version The format version of the internal buffer.
-   * @param type The type of the data to be stored.
-   * @param cell_size The cell size.
-   * @param dim_num The number of dimensions in case the tile stores
-   *      coordinates.
-   * @param Buffer The buffer to be encapsulated by the tile object. This means
-   *     that the tile will not create a new Buffer object, but operate
-   *     directly on the input.
-   * @param owns_buff If *true* the tile object will delete *buffer_* upon
-   *     destruction, otherwise it will not delete it.
-   */
-  Tile(
-      uint32_t format_version,
-      Datatype type,
-      uint64_t cell_size,
-      unsigned int dim_num,
-      Buffer* buffer,
-      bool owns_buff);
-
-  /**
-   * Copy constructor. This performs a deep copy (including potential memcpy of
-   * underlying buffers).
-   */
-  Tile(const Tile& tile);
-
-  /** Move constructor. */
-  Tile(Tile&& tile);
-
-  /** Destructor. */
-  ~Tile();
-
-  /**
-   * Copy-assign operator. This performs a deep copy (including potential memcpy
-   * of underlying buffers).
-   */
-  Tile& operator=(const Tile& tile);
-
-  /** Move-assign operator. */
-  Tile& operator=(Tile&& tile);
+  DISABLE_COPY_AND_COPY_ASSIGN(TileBase);
+  DISABLE_MOVE_AND_MOVE_ASSIGN(TileBase);
 
   /* ********************************* */
   /*                API                */
   /* ********************************* */
 
-  /** Returns the number of cells stored in the tile. */
-  uint64_t cell_num() const;
-
-  /**
-   * Tile initializer for storing unfiltered bytes.
-   *
-   * @param format_version The format version of the data in this tile.
-   * @param type The type of the data to be stored.
-   * @param tile_size The tile size. The internal buffer will be allocated
-   *     that much space upon construction.
-   * @param cell_size The cell size.
-   * @param dim_num The number of dimensions in case the tile stores
-   *      coordinates.
-   * @param fill_with_zeros If true, it fills the entire tile with zeros,
-   *      allocating memory and setting the size.
-   * @return Status
-   */
-  Status init_unfiltered(
-      uint32_t format_version,
-      Datatype type,
-      uint64_t tile_size,
-      uint64_t cell_size,
-      unsigned int dim_num,
-      bool fill_with_zeros = false);
-
-  /**
-   * Tile initializer for storing filtered bytes.
-   *
-   * @param format_version The format version of the data in this tile.
-   * @param type The type of the data to be stored.
-   * @param tile_size The tile size. The internal buffer will be allocated
-   *     that much space upon construction.
-   * @param cell_size The cell size.
-   * @param dim_num The number of dimensions in case the tile stores
-   *      coordinates.
-   * @return Status
-   */
-  Status init_filtered(
-      uint32_t format_version,
-      Datatype type,
-      uint64_t cell_size,
-      unsigned int dim_num);
-
-  /** Advances the buffer offset. */
-  void advance_offset(uint64_t nbytes);
-
-  /** Returns the internal buffer. */
-  Buffer* buffer() const;
-
-  /** Returns the cell size. */
-  uint64_t cell_size() const;
-
-  /**
-   * Returns a shallow or deep copy of this Tile.
-   *
-   * @param deep_copy If true, a deep copy is performed, including potentially
-   *    memcpying the underlying Buffer. If false, a shallow copy is performed,
-   *    which sets the clone's Buffer equal to Tile's buffer pointer.
-   * @return New Tile
-   */
-  Tile clone(bool deep_copy) const;
-
-  /**
-   * Sets `owns_buffer_` to `false` and thus will not destroy the buffer
-   * in the destructor.
-   */
-  void disown_buff();
-
-  bool owns_buff() const;
-
-  /** Returns the number of dimensions (0 if this is an attribute tile). */
-  unsigned int dim_num() const;
-
-  /** Checks if the tile is empty. */
-  bool empty() const;
-
-  /**
-   * Returns the current filtered state of the tile data in the buffer. When
-   * `true`, the buffer contains the filtered, on-disk format of the tile.
-   */
-  bool filtered() const;
-
-  /**
-   * Returns the buffer that contains the filtered, on-disk format.
-   */
-  Buffer* filtered_buffer();
+  /** Returns the tile data type. */
+  inline Datatype type() const {
+    return type_;
+  }
 
   /** Gets the format version number of the data in this Tile. */
-  uint32_t format_version() const;
+  inline uint32_t format_version() const {
+    return format_version_;
+  }
 
-  /** Checks if the tile is full. */
-  bool full() const;
+  /** Converts the data pointer to a specific type. */
+  template <class T>
+  inline T* data_as() const {
+    return static_cast<T*>(data());
+  }
 
-  /** The current offset in the tile. */
-  uint64_t offset() const;
+  /** Gets the size, considering the data as a specific type. */
+  template <class T>
+  inline size_t size_as() const {
+    return size() / sizeof(T);
+  }
 
-  /**
-   * Returns the pre-filtered size of the tile data in the buffer.
-   *
-   * On writes, the pre-filtered size is the uncompressed size.
-   *
-   * On reads, the pre-filtered size is the persisted (compressed) size.
-   */
-  uint64_t pre_filtered_size() const;
-
-  /** Reads from the tile into the input buffer *nbytes*. */
-  Status read(void* buffer, uint64_t nbytes);
+  /** Returns the internal buffer. */
+  inline void* data() const {
+    return data_.get();
+  }
 
   /**
    * Reads from the tile at the given offset into the input
    * buffer of size nbytes. Does not mutate the internal offset.
    * Thread-safe among readers.
    */
-  Status read(void* buffer, uint64_t nbytes, uint64_t offset) const;
-
-  /** Resets the size and offset of the tile. */
-  void reset();
-
-  /** Resets the tile offset. */
-  void reset_offset();
-
-  /** Resets the tile size. */
-  void reset_size();
-
-  /** Sets the tile offset. */
-  void set_offset(uint64_t offset);
-
-  /** Sets the pre-filtered size value to the given value. */
-  void set_pre_filtered_size(uint64_t pre_filtered_size);
+  void read(void* buffer, uint64_t offset, uint64_t nbytes) const;
 
   /** Returns the tile size. */
-  uint64_t size() const;
+  inline uint64_t size() const {
+    return (data_ == nullptr) ? 0 : size_;
+  }
 
-  /** Returns *true* if the tile stores coordinates. */
-  bool stores_coords() const;
-
-  /** Returns the tile data type. */
-  Datatype type() const;
-
-  /** Writes as much data as possibly can be read from the input buffer. */
-  Status write(ConstBuffer* buf);
-
-  /**
-   * Writes exactly `nbytes` from the input buffer to the local buffer.
-   * The local buffer can be potentially expanded to fit these bytes.
-   */
-  Status write(ConstBuffer* buf, uint64_t nbytes);
-
-  /** Writes `nbytes` from `data` to the tile. */
-  Status write(const void* data, uint64_t nbytes);
+  /** Returns the cell size. */
+  inline uint64_t cell_size() const {
+    return cell_size_;
+  }
 
   /**
    * Writes `nbytes` from `data` to the tile at `offset`.
@@ -298,45 +126,222 @@ class Tile {
    * @note This function assumes that the tile buffer has already been
    *     properly allocated. It does not alter the tile offset and size.
    */
-  Status write(const void* data, uint64_t offset, uint64_t nbytes);
+  void write(const void* data, uint64_t offset, uint64_t nbytes);
+
+  /**
+   * Adds an extra offset at the end of this tile representing the size of the
+   * var tile.
+   *
+   * @param var_tile Var tile.
+   */
+  void add_extra_offset(TileBase& var_tile) {
+    data_as<uint64_t>()[size_ / cell_size_ - 1] = var_tile.size();
+  }
+
+ protected:
+  /* ********************************* */
+  /*       PROTECTED ATTRIBUTES        */
+  /* ********************************* */
+
+  /** The memory resource to use. */
+  tdb::pmr::memory_resource* resource_;
+
+  /** The buffer backing the tile data. */
+  tdb::pmr::unique_ptr<std::byte> data_;
+
+  /** Size of the data. */
+  uint64_t size_;
+
+  /** The cell size. */
+  uint64_t cell_size_;
+
+  /** The format version of the data in this tile. */
+  format_version_t format_version_;
+
+  /** The tile data type. */
+  Datatype type_;
+};
+
+/**
+ * Tile object used for read operations.
+ */
+class Tile : public TileBase {
+ public:
+  /**
+   * returns a Tile initialized with parameters commonly used for
+   * generic data storage.
+   *
+   * @param tile_size to be provided to init_unfiltered call
+   */
+  static shared_ptr<Tile> from_generic(
+      storage_size_t tile_size, shared_ptr<MemoryTracker> memory_tracker);
+
+  /* ********************************* */
+  /*     CONSTRUCTORS & DESTRUCTORS    */
+  /* ********************************* */
+
+  /**
+   * Constructor.
+   *
+   * @param format_version The format version.
+   * @param type The data type.
+   * @param cell_size The cell size.
+   * @param zipped_coords_dim_num The number of dimensions in case the tile
+   *      stores coordinates.
+   * @param size The size of the tile.
+   * @param filtered_data Pointer to the external filtered data.
+   * @param filtered_size The filtered size to allocate.
+   */
+  Tile(
+      const format_version_t format_version,
+      const Datatype type,
+      const uint64_t cell_size,
+      const unsigned int zipped_coords_dim_num,
+      const uint64_t size,
+      void* filtered_data,
+      uint64_t filtered_size,
+      shared_ptr<MemoryTracker> memory_tracker);
+
+  /**
+   * Constructor.
+   *
+   * @param format_version The format version.
+   * @param type The data type.
+   * @param cell_size The cell size.
+   * @param zipped_coords_dim_num The number of dimensions in case the tile
+   *      stores coordinates.
+   * @param size The size of the tile.
+   * @param filtered_data Pointer to the external filtered data.
+   * @param filtered_size The filtered size to allocate.
+   * @param resource The memory resource to use.
+   */
+  Tile(
+      const format_version_t format_version,
+      const Datatype type,
+      const uint64_t cell_size,
+      const unsigned int zipped_coords_dim_num,
+      const uint64_t size,
+      void* filtered_data,
+      uint64_t filtered_size,
+      tdb::pmr::memory_resource* resource);
+
+  DISABLE_MOVE_AND_MOVE_ASSIGN(Tile);
+  DISABLE_COPY_AND_COPY_ASSIGN(Tile);
+
+  /* ********************************* */
+  /*                API                */
+  /* ********************************* */
+
+  /** Returns *true* if the tile stores zipped coordinates. */
+  inline bool stores_coords() const {
+    return zipped_coords_dim_num_ > 0;
+  }
+
+  /** Returns the number of zipped coordinates (0 if this is an attribute tile).
+   */
+  inline unsigned int zipped_coords_dim_num() const {
+    return zipped_coords_dim_num_;
+  }
+
+  /**
+   * Returns the current filtered state of the tile data in the buffer. When
+   * `true`, the buffer contains the filtered, on-disk format of the tile.
+   */
+  inline bool filtered() const {
+    return filtered_size_ > 0;
+  }
+
+  /** Returns the buffer that contains the filtered, on-disk format. */
+  inline char* filtered_data() {
+    return static_cast<char*>(filtered_data_);
+  }
+
+  /** Returns the data casted as a type. */
+  template <class T>
+  inline T* filtered_data_as() {
+    return static_cast<T*>(filtered_data_);
+  }
+
+  /** Clears the filtered buffer. */
+  void clear_filtered_buffer() {
+    filtered_data_ = nullptr;
+    filtered_size_ = 0;
+  }
+
+  /**
+   * Returns the buffer size.
+   */
+  inline uint64_t filtered_size() {
+    return filtered_size_;
+  }
 
   /**
    * Zips the coordinate values such that a cell's coordinates across
    * all dimensions appear contiguously in the buffer.
    */
-  Status zip_coordinates();
+  void zip_coordinates();
+
+  /**
+   * Reads the chunk data of a tile buffer and populates a chunk data structure.
+   *
+   * @param chunk_data Tile chunk info, buffers and offsets.
+   * @return Original size.
+   */
+  uint64_t load_chunk_data(ChunkData& chunk_data);
+
+  /**
+   * Reads the chunk data of a tile offsets buffer and populates a chunk data
+   * structure.
+   *
+   * @param chunk_data Tile chunk info, buffers and offsets.
+   * @return Original size.
+   */
+  uint64_t load_offsets_chunk_data(ChunkData& chunk_data);
 
  private:
+  /* ********************************* */
+  /*         PRIVATE FUNCTIONS         */
+  /* ********************************* */
+
+  /**
+   * Reads the chunk data of a tile buffer and populates a chunk data structure.
+   *
+   * This expects as input a Tile in the following byte format:
+   *
+   *   number_of_chunks (uint64_t)
+   *   chunk0_orig_len (uint32_t)
+   *   chunk0_data_len (uint32_t)
+   *   chunk0_metadata_len (uint32_t)
+   *   chunk0_metadata (uint8_t[])
+   *   chunk0_data (uint8_t[])
+   *   chunk1_orig_len (uint32_t)
+   *   chunk1_data_len (uint32_t)
+   *   chunk1_metadata_len (uint32_t)
+   *   chunk1_metadata (uint8_t[])
+   *   chunk1_data (uint8_t[])
+   *   ...
+   *   chunkN_orig_len (uint32_t)
+   *   chunkN_data_len (uint32_t)
+   *   chunkN_metadata_len (uint32_t)
+   *   chunkN_metadata (uint8_t[])
+   *   chunkN_data (uint8_t[])
+   *
+   * @param chunk_data Tile chunk info, buffers and offsets.
+   * @param expected_original_size Expected size for the tile.
+   * @return Original size.
+   */
+  uint64_t load_chunk_data(
+      ChunkData& chunk_data, uint64_t expected_original_size);
+
   /* ********************************* */
   /*         PRIVATE ATTRIBUTES        */
   /* ********************************* */
 
-  /** The buffer backing the tile data. */
-  Buffer* buffer_;
-
-  /** The cell size. */
-  uint64_t cell_size_;
-
   /**
-   * The number of dimensions, in case the tile stores coordinates. It is 0
-   * in case the tile stores attributes.
+   * The number of dimensions, in case the tile stores zipped coordinates.
+   * It is 0 in case the tile stores attributes or other type of dimensions
    */
-  unsigned int dim_num_;
-
-  /** The format version of the data in this tile. */
-  uint32_t format_version_;
-
-  /**
-   * If *true* the tile object will free *buffer_* upon destruction, otherwise
-   * it will not delete it.
-   */
-  bool owns_buffer_;
-
-  /** The size in bytes of the tile data before it has been filtered. */
-  uint64_t pre_filtered_size_;
-
-  /** The tile data type. */
-  Datatype type_;
+  unsigned int zipped_coords_dim_num_;
 
   /**
    * The buffer that contains the filtered, on-disk bytes. This buffer is
@@ -344,14 +349,158 @@ class Tile {
    * pipeline. Note that this buffer is _only_ accessed in the filtered()
    * public API, all other public API routines operate on 'buffer_'.
    */
-  Buffer filtered_buffer_;
+  void* filtered_data_;
+
+  /** The size of the filtered data. */
+  uint64_t filtered_size_;
+};
+
+/**
+ * Tile object for write operations.
+ */
+class WriterTile : public TileBase {
+  /**
+   * Allow access to max_tile_chunk_size_ for testing.
+   */
+  friend class WhiteboxWriterTile;
+
+ public:
+  /**
+   * returns a Tile initialized with parameters commonly used for
+   * generic data storage.
+   *
+   * @param tile_size to be provided to init_unfiltered call
+   * @param memory_tracker The memory tracker to use.
+   */
+  static shared_ptr<WriterTile> from_generic(
+      storage_size_t tile_size, shared_ptr<MemoryTracker> memory_tracker);
+
+  /**
+   * Computes the chunk size for a tile.
+   *
+   * @param tile_size The total size of the tile.
+   * @param tile_cell_size The cell size.
+   * @return Chunk size.
+   */
+  static uint32_t compute_chunk_size(
+      const uint64_t tile_size, const uint64_t tile_cell_size);
 
   /* ********************************* */
-  /*          PRIVATE METHODS          */
+  /*     CONSTRUCTORS & DESTRUCTORS    */
   /* ********************************* */
 
-  /** Swaps the contents (all field values) of this tile with the given tile. */
-  void swap(Tile& tile);
+  /**
+   * Constructor.
+   *
+   * @param format_version The format version.
+   * @param type The data type.
+   * @param cell_size The cell size.
+   * @param size The size of the tile.
+   * @param meory_tracker The memory tracker to use.
+   */
+  WriterTile(
+      const format_version_t format_version,
+      const Datatype type,
+      const uint64_t cell_size,
+      const uint64_t size,
+      shared_ptr<MemoryTracker> memory_tracker);
+
+  /**
+   * Constructor.
+   *
+   * @param format_version The format version.
+   * @param type The data type.
+   * @param cell_size The cell size.
+   * @param size The size of the tile.
+   * @param resource The memory resource to use.
+   */
+  WriterTile(
+      const format_version_t format_version,
+      const Datatype type,
+      const uint64_t cell_size,
+      const uint64_t size,
+      tdb::pmr::memory_resource* resource);
+
+  DISABLE_COPY_AND_COPY_ASSIGN(WriterTile);
+  DISABLE_MOVE_AND_MOVE_ASSIGN(WriterTile);
+
+  /* ********************************* */
+  /*                API                */
+  /* ********************************* */
+
+  /** Returns the number of cells stored in the tile. */
+  uint64_t cell_num() const {
+    return size() / cell_size_;
+  }
+
+  /** Clears the internal buffer. */
+  void clear_data();
+
+  /**
+   * Returns the current filtered state of the tile data in the buffer. When
+   * `true`, the buffer contains the filtered, on-disk format of the tile.
+   */
+  inline bool filtered() const {
+    return filtered_buffer_.size() > 0;
+  }
+
+  /**
+   * Returns the buffer that contains the filtered, on-disk format.
+   */
+  inline FilteredBuffer& filtered_buffer() {
+    return filtered_buffer_;
+  }
+
+  /**
+   * Write method used for var data. Resizes the internal buffer if needed.
+   *
+   * @param data Pointer to the data to write.
+   * @param offset Offset to write into the tile buffer.
+   * @param nbytes Number of bytes to write.
+   */
+  void write_var(const void* data, uint64_t offset, uint64_t nbytes);
+
+  /**
+   * Sets the size of the tile.
+   *
+   * @param size The new size.
+   */
+  inline void set_size(uint64_t size) {
+    size_ = size;
+  }
+
+ private:
+  /* ********************************* */
+  /*         PRIVATE ATTRIBUTES        */
+  /* ********************************* */
+
+  /**
+   * The buffer that contains the filtered, on-disk bytes. This buffer is
+   * exclusively used in the I/O path between the disk and the filter
+   * pipeline. Note that this buffer is _only_ accessed in the filtered()
+   * public API, all other public API routines operate on 'buffer_'.
+   */
+  FilteredBuffer filtered_buffer_;
+
+  /**
+   * Static variable to store constants::max_tile_chunk_size. This will be used
+   * to override the value in tests.
+   */
+  static uint64_t max_tile_chunk_size_;
+};
+
+/**
+ * A deserializer that owns a Tile.
+ */
+class TileDeserializer : public Deserializer {
+ public:
+  explicit TileDeserializer(shared_ptr<Tile> tile)
+      : Deserializer(tile->data(), tile->size())
+      , tile_(tile) {
+  }
+
+ private:
+  shared_ptr<Tile> tile_;
 };
 
 }  // namespace sm

@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,6 +36,7 @@
 
 #include "tiledb/common/status.h"
 #include "tiledb/sm/misc/constants.h"
+#include "tiledb/stdx/utility/to_underlying.h"
 
 #include <cassert>
 
@@ -59,7 +60,11 @@ enum class Compressor : uint8_t {
   /** Bzip2 compressor */
   BZIP2 = 5,
   /** Double-delta compressor */
-  DOUBLE_DELTA = 6
+  DOUBLE_DELTA = 6,
+  /** Dictionary compressor */
+  DICTIONARY_ENCODING = 7,
+  /** Delta compressor */
+  DELTA = 8
 };
 
 /** Returns the string representation of the input compressor. */
@@ -77,8 +82,12 @@ inline const std::string& compressor_str(Compressor type) {
       return constants::rle_str;
     case Compressor::BZIP2:
       return constants::bzip2_str;
+    case Compressor::DELTA:
+      return constants::delta_str;
     case Compressor::DOUBLE_DELTA:
       return constants::double_delta_str;
+    case Compressor::DICTIONARY_ENCODING:
+      return constants::filter_dictionary_str;
     default:
       return constants::empty_str;
   }
@@ -99,12 +108,29 @@ inline Status compressor_enum(
     *compressor = Compressor::RLE;
   else if (compressor_type_str == constants::bzip2_str)
     *compressor = Compressor::BZIP2;
+  else if (compressor_type_str == constants::delta_str)
+    *compressor = Compressor::DELTA;
   else if (compressor_type_str == constants::double_delta_str)
     *compressor = Compressor::DOUBLE_DELTA;
+  else if (compressor_type_str == constants::filter_dictionary_str)
+    *compressor = Compressor::DICTIONARY_ENCODING;
   else {
-    return Status::Error("Invalid Compressor " + compressor_type_str);
+    return Status_Error("Invalid Compressor " + compressor_type_str);
   }
   return Status::Ok();
+}
+
+/** Throws error if the input Compressor enum is not between 0 and 7. */
+inline void ensure_compressor_is_valid(uint8_t compressor) {
+  if (compressor > 8) {
+    throw std::runtime_error(
+        "Invalid Compressor (" + std::to_string(compressor) + ")");
+  }
+}
+
+/** Throws error if the input Compressor's enum is not between 0 and 7. */
+inline void ensure_compressor_is_valid(Compressor compressor) {
+  ensure_compressor_is_valid(::stdx::to_underlying(compressor));
 }
 }  // namespace sm
 }  // namespace tiledb

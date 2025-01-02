@@ -36,8 +36,10 @@
 
 #ifdef _WIN32
 #include "tiledb/sm/crypto/crypto_win32.h"
+using PlatformCrypto = tiledb::sm::Win32CNG;
 #else
 #include "tiledb/sm/crypto/crypto_openssl.h"
+using PlatformCrypto = tiledb::sm::OpenSSL;
 #endif
 
 using namespace tiledb::common;
@@ -54,15 +56,15 @@ Status Crypto::encrypt_aes256gcm(
     PreallocatedBuffer* output_tag) {
   if (key->size() != AES256GCM_KEY_BYTES)
     return LOG_STATUS(
-        Status::EncryptionError("AES-256-GCM error; unexpected key length."));
+        Status_EncryptionError("AES-256-GCM error; unexpected key length."));
   if (iv != nullptr && iv->size() != AES256GCM_IV_BYTES)
     return LOG_STATUS(
-        Status::EncryptionError("AES-256-GCM error; unexpected IV length."));
+        Status_EncryptionError("AES-256-GCM error; unexpected IV length."));
   if (output_iv == nullptr || output_iv->size() != AES256GCM_IV_BYTES)
-    return LOG_STATUS(Status::EncryptionError(
-        "AES-256-GCM error; invalid output IV buffer."));
+    return LOG_STATUS(
+        Status_EncryptionError("AES-256-GCM error; invalid output IV buffer."));
   if (output_tag == nullptr || output_tag->size() != AES256GCM_TAG_BYTES)
-    return LOG_STATUS(Status::EncryptionError(
+    return LOG_STATUS(Status_EncryptionError(
         "AES-256-GCM error; invalid output tag buffer."));
 
 #ifdef _WIN32
@@ -82,19 +84,14 @@ Status Crypto::decrypt_aes256gcm(
     Buffer* output) {
   if (key == nullptr || key->size() != AES256GCM_KEY_BYTES)
     return LOG_STATUS(
-        Status::EncryptionError("AES-256-GCM error; invalid key."));
+        Status_EncryptionError("AES-256-GCM error; invalid key."));
   if (iv == nullptr || iv->size() != AES256GCM_IV_BYTES)
-    return LOG_STATUS(
-        Status::EncryptionError("AES-256-GCM error; invalid IV."));
+    return LOG_STATUS(Status_EncryptionError("AES-256-GCM error; invalid IV."));
   if (tag == nullptr || tag->size() != AES256GCM_TAG_BYTES)
     return LOG_STATUS(
-        Status::EncryptionError("AES-256-GCM error; invalid tag."));
+        Status_EncryptionError("AES-256-GCM error; invalid tag."));
 
-#ifdef _WIN32
-  return Win32CNG::decrypt_aes256gcm(key, iv, tag, input, output);
-#else
-  return OpenSSL::decrypt_aes256gcm(key, iv, tag, input, output);
-#endif
+  return PlatformCrypto::decrypt_aes256gcm(key, iv, tag, input, output);
 }
 
 Status Crypto::md5(ConstBuffer* input, Buffer* output) {
@@ -108,11 +105,7 @@ Status Crypto::md5(
 
 Status Crypto::md5(
     const void* input, uint64_t input_read_size, Buffer* output) {
-#ifdef _WIN32
-  return Win32CNG::md5(input, input_read_size, output);
-#else
-  return OpenSSL::md5(input, input_read_size, output);
-#endif
+  return PlatformCrypto::md5(input, input_read_size, output);
 }
 
 Status Crypto::sha256(ConstBuffer* input, Buffer* output) {
@@ -126,11 +119,7 @@ Status Crypto::sha256(
 
 Status Crypto::sha256(
     const void* input, uint64_t input_read_size, Buffer* output) {
-#ifdef _WIN32
-  return Win32CNG::sha256(input, input_read_size, output);
-#else
-  return OpenSSL::sha256(input, input_read_size, output);
-#endif
+  return PlatformCrypto::sha256(input, input_read_size, output);
 }
 
 }  // namespace sm

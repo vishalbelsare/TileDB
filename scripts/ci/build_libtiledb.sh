@@ -25,23 +25,14 @@
 #
 set -xeuo pipefail
 
-# Build and test libtiledb
-
-# Set up arguments for bootstrap.sh
-bootstrap_args="${bootstrap_args} --enable=verbose";
-
-mkdir -p $GITHUB_WORKSPACE/build
-cd $GITHUB_WORKSPACE/build
-
-# Configure and build TileDB
-echo "Bootstrapping with '$bootstrap_args'"
-$GITHUB_WORKSPACE/bootstrap $bootstrap_args
-
-make -j4
-make examples -j4
-make -C tiledb install
+# Check for clean configure with tests disabled
+# This will not validate linkage, but we can't
+# build all variations separately right now.
 
 cd $GITHUB_WORKSPACE/build
+
+cmake --build . -j4 --target install
+
 ls -la
 
-make -j4 -C tiledb tiledb_unit
+cmake --build . -j4 --target tiledb_unit unit_vfs tiledb_regression all_link_complete

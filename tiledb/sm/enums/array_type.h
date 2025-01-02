@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -39,13 +39,12 @@
 #include "tiledb/common/status.h"
 #include "tiledb/sm/misc/constants.h"
 
-namespace tiledb {
-namespace sm {
+namespace tiledb::sm {
 
 /** Defines the array type. */
 enum class ArrayType : uint8_t {
 #define TILEDB_ARRAY_TYPE_ENUM(id) id
-#include "tiledb/sm/c_api/tiledb_enum.h"
+#include "tiledb/api/c_api/array_schema/array_type_enum.h"
 #undef TILEDB_ARRAY_TYPE_ENUM
 };
 
@@ -69,12 +68,20 @@ inline Status array_type_enum(
   else if (array_type_str == constants::sparse_str)
     *array_type_enum = ArrayType::SPARSE;
   else {
-    return Status::Error("Invalid ArrayType " + array_type_str);
+    return Status_Error("Invalid ArrayType " + array_type_str);
   }
   return Status::Ok();
 }
 
-}  // namespace sm
-}  // namespace tiledb
+/** Throws error if the input ArrayType is not Dense or Sparse. */
+inline void ensure_array_type_is_valid(uint8_t array_type_enum) {
+  auto type = ArrayType(array_type_enum);
+  if (type != ArrayType::DENSE && type != ArrayType::SPARSE) {
+    throw std::runtime_error(
+        "Invalid ArrayType (" + std::to_string(array_type_enum) + ")");
+  }
+}
+
+}  // namespace tiledb::sm
 
 #endif  // TILEDB_ARRAY_TYPE_H

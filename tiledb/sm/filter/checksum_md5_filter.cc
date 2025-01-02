@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2022 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -45,30 +45,30 @@ using namespace tiledb::common;
 namespace tiledb {
 namespace sm {
 
-ChecksumMD5Filter::ChecksumMD5Filter()
-    : Filter(FilterType::FILTER_CHECKSUM_MD5) {
+ChecksumMD5Filter::ChecksumMD5Filter(Datatype filter_data_type)
+    : Filter(FilterType::FILTER_CHECKSUM_MD5, filter_data_type) {
 }
 
 ChecksumMD5Filter* ChecksumMD5Filter::clone_impl() const {
-  return tdb_new(ChecksumMD5Filter);
+  return tdb_new(ChecksumMD5Filter, filter_data_type_);
 }
 
-void ChecksumMD5Filter::dump(FILE* out) const {
-  if (out == nullptr)
-    out = stdout;
-
-  fprintf(out, "ChecksumMD5");
+std::ostream& ChecksumMD5Filter::output(std::ostream& os) const {
+  os << "ChecksumMD5";
+  return os;
 }
 
-Status ChecksumMD5Filter::run_forward(
+void ChecksumMD5Filter::run_forward(
+    const WriterTile&,
+    WriterTile* const,
     FilterBuffer* input_metadata,
     FilterBuffer* input,
     FilterBuffer* output_metadata,
     FilterBuffer* output) const {
   // Set output buffer to input buffer
-  RETURN_NOT_OK(output->append_view(input));
+  throw_if_not_ok(output->append_view(input));
   // Add original input metadata as a view to the output metadata
-  output_metadata->append_view(input_metadata);
+  throw_if_not_ok(output_metadata->append_view(input_metadata));
 
   // Compute and write the metadata
   std::vector<ConstBuffer> data_parts = input->buffers(),
@@ -80,20 +80,21 @@ Status ChecksumMD5Filter::run_forward(
   uint32_t part_md_size = Crypto::MD5_DIGEST_BYTES + sizeof(uint64_t);
   uint32_t metadata_size =
       (total_num_parts * part_md_size) + (2 * sizeof(uint32_t));
-  RETURN_NOT_OK(output_metadata->prepend_buffer(metadata_size));
-  RETURN_NOT_OK(output_metadata->write(&num_metadata_parts, sizeof(uint32_t)));
-  RETURN_NOT_OK(output_metadata->write(&num_data_parts, sizeof(uint32_t)));
+  throw_if_not_ok(output_metadata->prepend_buffer(metadata_size));
+  throw_if_not_ok(
+      output_metadata->write(&num_metadata_parts, sizeof(uint32_t)));
+  throw_if_not_ok(output_metadata->write(&num_data_parts, sizeof(uint32_t)));
 
   // Checksum all parts
   for (auto& part : metadata_parts)
-    RETURN_NOT_OK(checksum_part(&part, output_metadata));
+    throw_if_not_ok(checksum_part(&part, output_metadata));
   for (auto& part : data_parts)
-    RETURN_NOT_OK(checksum_part(&part, output_metadata));
-
-  return Status::Ok();
+    throw_if_not_ok(checksum_part(&part, output_metadata));
 }
 
 Status ChecksumMD5Filter::run_reverse(
+    const Tile&,
+    Tile*,
     FilterBuffer* input_metadata,
     FilterBuffer* input,
     FilterBuffer* output_metadata,
@@ -128,7 +129,7 @@ Status ChecksumMD5Filter::run_reverse(
     // Only fetch and store checksum if we are not going to skip it
     if (!skip_validation) {
       Buffer buff;
-      buff.realloc(Crypto::MD5_DIGEST_BYTES);
+      throw_if_not_ok(buff.realloc(Crypto::MD5_DIGEST_BYTES));
       RETURN_NOT_OK(
           input_metadata->read(buff.data(), Crypto::MD5_DIGEST_BYTES));
       metadata_checksums[i] = std::make_pair(metadata_checksummed_bytes, buff);
@@ -145,7 +146,7 @@ Status ChecksumMD5Filter::run_reverse(
     // Only fetch and store checksum if we are not going to skip it
     if (!skip_validation) {
       Buffer buff;
-      buff.realloc(Crypto::MD5_DIGEST_BYTES);
+      throw_if_not_ok(buff.realloc(Crypto::MD5_DIGEST_BYTES));
       RETURN_NOT_OK(
           input_metadata->read(buff.data(), Crypto::MD5_DIGEST_BYTES));
       data_checksums[i] = std::make_pair(data_checksummed_bytes, buff);
@@ -195,7 +196,7 @@ Status ChecksumMD5Filter::checksum_part(
   // Allocate an initial output buffer.
   tdb_unique_ptr<Buffer> computed_hash =
       tdb_unique_ptr<Buffer>(tdb_new(Buffer));
-  computed_hash->realloc(Crypto::MD5_DIGEST_BYTES);
+  throw_if_not_ok(computed_hash->realloc(Crypto::MD5_DIGEST_BYTES));
   RETURN_NOT_OK(Crypto::md5(part, computed_hash.get()));
 
   // Write metadata.
@@ -220,7 +221,7 @@ Status ChecksumMD5Filter::compare_checksum_part(
   if (!part->get_const_buffer(bytes_to_compare, buffer_to_compare.get()).ok()) {
     // If the bytes we need to compare span multiple buffers we will have to
     // copy them out
-    byte_buffer_to_compare->realloc(bytes_to_compare);
+    throw_if_not_ok(byte_buffer_to_compare->realloc(bytes_to_compare));
     RETURN_NOT_OK(part->read(byte_buffer_to_compare->data(), bytes_to_compare));
     // Set the buffer back
     buffer_to_compare = tdb_unique_ptr<ConstBuffer>(
@@ -234,7 +235,7 @@ Status ChecksumMD5Filter::compare_checksum_part(
   // Buffer to store the newly computed hash value for comparison
   tdb_unique_ptr<Buffer> computed_hash =
       tdb_unique_ptr<Buffer>(tdb_new(Buffer));
-  computed_hash->realloc(Crypto::MD5_DIGEST_BYTES);
+  throw_if_not_ok(computed_hash->realloc(Crypto::MD5_DIGEST_BYTES));
 
   RETURN_NOT_OK(Crypto::md5(
       buffer_to_compare->data(), bytes_to_compare, computed_hash.get()));
@@ -246,14 +247,17 @@ Status ChecksumMD5Filter::compare_checksum_part(
         reinterpret_cast<unsigned char*>(computed_hash->data());
     char md5string[33];
     for (uint64_t i = 0; i < computed_hash->alloced_size(); ++i) {
-      sprintf(&md5string[i * 2], "%02x", (unsigned int)digest[i]);
+      snprintf(&md5string[i * 2], 3, "%02x", (unsigned int)digest[i]);
     }
 
     unsigned char* existing_digest = reinterpret_cast<unsigned char*>(checksum);
     char md5string_existing[33];
     for (uint64_t i = 0; i < Crypto::MD5_DIGEST_BYTES; ++i) {
-      sprintf(
-          &md5string_existing[i * 2], "%02x", (unsigned int)existing_digest[i]);
+      snprintf(
+          &md5string_existing[i * 2],
+          3,
+          "%02x",
+          (unsigned int)existing_digest[i]);
     }
 
     std::stringstream message;
@@ -261,7 +265,7 @@ Status ChecksumMD5Filter::compare_checksum_part(
     message << md5string_existing;
     message << " got ";
     message << md5string;
-    return Status::ChecksumError(message.str());
+    return Status_ChecksumError(message.str());
   }
 
   return Status::Ok();

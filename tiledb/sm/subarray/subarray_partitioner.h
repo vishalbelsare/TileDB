@@ -5,7 +5,7 @@
  *
  * The MIT License
  *
- * @copyright Copyright (c) 2017-2021 TileDB, Inc.
+ * @copyright Copyright (c) 2017-2024 TileDB, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,16 +36,15 @@
 #include <list>
 
 #include <unordered_map>
-#include "tiledb/common/logger_public.h"
-#include "tiledb/common/thread_pool.h"
+#include "tiledb/common/common.h"
+#include "tiledb/common/thread_pool/thread_pool.h"
 #include "tiledb/sm/misc/constants.h"
 #include "tiledb/sm/stats/stats.h"
 #include "tiledb/sm/subarray/subarray.h"
 
 using namespace tiledb::common;
 
-namespace tiledb {
-namespace sm {
+namespace tiledb::sm {
 
 /**
  * Iterates over partitions of a subarray in a way that the results
@@ -171,7 +170,7 @@ class SubarrayPartitioner {
       uint64_t memory_budget_validity,
       ThreadPool* compute_tp,
       stats::Stats* parent_stats,
-      tdb_shared_ptr<Logger> logger);
+      shared_ptr<Logger> logger);
 
   /** Destructor. */
   ~SubarrayPartitioner();
@@ -326,13 +325,20 @@ class SubarrayPartitioner {
   State* state();
 
   /** Returns the subarray. */
-  const Subarray* subarray() const;
+  const Subarray& subarray() const;
 
   /** Returns the subarray. */
-  Subarray* subarray();
+  Subarray& subarray();
 
   /** Returns `stats_`. */
-  stats::Stats* stats() const;
+  const stats::Stats& stats() const;
+
+  /** Populate the owned stats instance with data.
+   * To be removed when the class will get a C41 constructor.
+   *
+   * @param data Data to populate the stats with.
+   */
+  void set_stats(const stats::StatsData& data);
 
  private:
   /* ********************************* */
@@ -346,7 +352,7 @@ class SubarrayPartitioner {
   inline static std::atomic<uint64_t> logger_id_ = 0;
 
   /** The class logger. */
-  tdb_shared_ptr<Logger> logger_;
+  shared_ptr<Logger> logger_;
 
   /** The config. */
   const Config* config_;
@@ -380,6 +386,12 @@ class SubarrayPartitioner {
    * determining if a partition should be split.
    */
   bool skip_split_on_est_size_;
+
+  /**
+   * If true, do not consider a memory budget overflow an error when the
+   * partition is a unary range.
+   */
+  bool skip_unary_partitioning_budget_check_;
 
   /** The thread pool for compute-bound tasks. */
   ThreadPool* compute_tp_;
@@ -552,7 +564,6 @@ class SubarrayPartitioner {
       ByteVecValue* splitting_value) const;
 };
 
-}  // namespace sm
-}  // namespace tiledb
+}  // namespace tiledb::sm
 
 #endif  // TILEDB_SUBARRAY_PARTITIONER_H

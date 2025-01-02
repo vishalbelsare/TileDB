@@ -38,6 +38,7 @@
 #if !defined(NOMINMAX)
 #define NOMINMAX  // curl may include windows headers
 #endif
+
 #include <curl/curl.h>
 #include <cstdlib>
 #include <functional>
@@ -45,15 +46,23 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+
+#include "tiledb/common/dynamic_memory/dynamic_memory.h"
 #include "tiledb/sm/buffer/buffer.h"
 #include "tiledb/sm/buffer/buffer_list.h"
 #include "tiledb/sm/config/config.h"
+#include "tiledb/sm/curl/curl_init.h"
 #include "tiledb/sm/enums/serialization_type.h"
 #include "tiledb/sm/stats/stats.h"
 
 using namespace tiledb::common;
 
 namespace tiledb {
+
+namespace common {
+class Logger;
+}
+
 namespace sm {
 
 /**
@@ -76,6 +85,30 @@ struct HeaderCbData {
 
   /** A pointer to the lock attached to the shared resource of the cache map */
   std::mutex* redirect_uri_map_lock;
+
+  /** True if the uri should be stored in URI cache map, false if not */
+  bool should_cache_redirect;
+};
+
+/**
+ * Wraps opaque user data to be invoked with a write callback.
+ */
+struct WriteCbState {
+  /** Default constructor. */
+  WriteCbState()
+      : reset(true)
+      , arg(NULL)
+      , skip_retries(false) {
+  }
+
+  /** True if this is the first write callback invoked in a request retry. */
+  bool reset;
+
+  /** The opaque user data to pass to the write callback. */
+  void* arg;
+
+  /** True if the internal curl retries should be skipped. */
+  bool skip_retries;
 };
 
 /**
@@ -97,7 +130,7 @@ size_t write_header_callback(
 class Curl {
  public:
   /** Constructor. */
-  Curl();
+  explicit Curl(const std::shared_ptr<Logger>& logger);
 
   /** Destructor. */
   ~Curl() = default;
@@ -119,7 +152,8 @@ class Curl {
       const Config* config,
       const std::unordered_map<std::string, std::string>& extra_headers,
       std::unordered_map<std::string, std::string>* res_headers,
-      std::mutex* res_mtx);
+      std::mutex* res_mtx,
+      bool should_cache_redirect = true);
 
   /**
    * Escapes the given URL.
@@ -128,6 +162,26 @@ class Curl {
    * @return Escaped URL
    */
   std::string url_escape(const std::string& url) const;
+
+  /**
+   * Wrapper for sending patch request to server and returning
+   * the unbuffered response body.
+   *
+   * @param stats The stats instance to record into
+   * @param url URL to post to
+   * @param serialization_type Serialization type to use
+   * @param data Encoded data buffer for posting
+   * @param returned_data Buffer to store response data
+   * @param res_ns_uri Array Namespace and URI
+   * @return Status
+   */
+  Status patch_data(
+      stats::Stats* stats,
+      const std::string& url,
+      SerializationType serialization_type,
+      BufferList* data,
+      Buffer* returned_data,
+      const std::string& res_ns_uri);
 
   /**
    * Wrapper for posting data to server and returning
@@ -145,7 +199,44 @@ class Curl {
       stats::Stats* stats,
       const std::string& url,
       SerializationType serialization_type,
-      const BufferList* data,
+      BufferList* data,
+      Buffer* returned_data,
+      const std::string& res_ns_uri);
+
+  /**
+   * Wrapper for sending put request to server and returning
+   * the unbuffered response body.
+   *
+   * @param stats The stats instance to record into
+   * @param url URL to post to
+   * @param serialization_type Serialization type to use
+   * @param data Encoded data buffer for posting
+   * @param returned_data Buffer to store response data
+   * @param res_ns_uri Array Namespace and URI
+   * @return Status
+   */
+  Status put_data(
+      stats::Stats* stats,
+      const std::string& url,
+      SerializationType serialization_type,
+      BufferList* data,
+      Buffer* returned_data,
+      const std::string& res_ns_uri);
+
+  /**
+   * Wrapper for sending options request to server.
+   *
+   * @param stats The stats instance to record into
+   * @param url URL to post to
+   * @param serialization_type Serialization type to use
+   * @param returned_data Buffer to store response data
+   * @param res_ns_uri Array Namespace and URI
+   * @return Status
+   */
+  Status options(
+      stats::Stats* const stats,
+      const std::string& url,
+      SerializationType serialization_type,
       Buffer* returned_data,
       const std::string& res_ns_uri);
 
@@ -181,10 +272,40 @@ class Curl {
       stats::Stats* stats,
       const std::string& url,
       SerializationType serialization_type,
-      const BufferList* data,
+      BufferList* data,
       Buffer* returned_data,
       PostResponseCb&& write_cb,
       const std::string& res_ns_uri);
+
+  /**
+   * Common code shared between variants of 'patch_data'.
+   *
+   * @param serialization_type Serialization type to use
+   * @param data Encoded data buffer for posting
+   * @param headers Request headers that must be freed after the curl
+   *    request is complete. If this routine returns a non-OK status,
+   *    the value returned through this parameter should be ignored.
+   * @return Status
+   */
+  Status patch_data_common(
+      SerializationType serialization_type,
+      BufferList* data,
+      struct curl_slist** headers);
+
+  /**
+   * Common code shared between variants of 'put_data'.
+   *
+   * @param serialization_type Serialization type to use
+   * @param data Encoded data buffer for posting
+   * @param headers Request headers that must be freed after the curl
+   *    request is complete. If this routine returns a non-OK status,
+   *    the value returned through this parameter should be ignored.
+   * @return Status
+   */
+  Status put_data_common(
+      SerializationType serialization_type,
+      BufferList* data,
+      struct curl_slist** headers);
 
   /**
    * Common code shared between variants of 'post_data'.
@@ -198,7 +319,7 @@ class Curl {
    */
   Status post_data_common(
       SerializationType serialization_type,
-      const BufferList* data,
+      BufferList* data,
       struct curl_slist** headers);
 
   /**
@@ -236,7 +357,30 @@ class Curl {
       Buffer* returned_data,
       const std::string& res_ns_uri);
 
+  /**
+   * Get HTTP status code of last request
+   *
+   * @return tuple of status and last_request
+   */
+  tuple<Status, optional<long>> last_http_status_code();
+
+  /**
+   * Checks if the request should be retried
+   *
+   * @param curl_code the curl code of the attempted request
+   * @param http_code http code to check
+   * @return retry or not
+   */
+  bool should_retry_request(CURLcode curl_code, long http_request) const;
+
  private:
+  /**
+   * A libcurl initializer instance. This should remain
+   * the first member variable to ensure that libcurl is
+   * initialized before any calls that may require it.
+   */
+  tiledb::sm::curl::LibCurlInitializer curl_inited_;
+
   /** TileDB config parameters. */
   const Config* config_;
 
@@ -264,6 +408,21 @@ class Curl {
   /** List of http status codes to retry. */
   std::vector<uint32_t> retry_http_codes_;
 
+  /** The class logger. */
+  std::shared_ptr<Logger> logger_;
+
+  /** UID of the logger instance */
+  inline static std::atomic<uint64_t> logger_id_ = 0;
+
+  /** Verbose logging in curl. */
+  bool verbose_;
+
+  /** Max curl buffer size for received data. */
+  uint64_t curl_buffer_size_;
+
+  /* Retry requests with curl errors */
+  bool retry_curl_errors_;
+
   /**
    * Populates the curl slist with authorization (token or username+password),
    * and any extra headers.
@@ -290,6 +449,7 @@ class Curl {
    * @param stats The stats instance to record into
    * @param url URL to fetch
    * @param curl_code Set to the return value of the curl call
+   * @param data Encoded data buffer for sending, if applicable to the request
    * @param returned_data Buffer that will store the response data
    * @return Status
    */
@@ -297,6 +457,7 @@ class Curl {
       stats::Stats* const stats,
       const char* url,
       CURLcode* curl_code,
+      BufferList* data,
       Buffer* returned_data) const;
 
   /**
@@ -306,6 +467,7 @@ class Curl {
    * @param stats The stats instance to record into
    * @param url URL to fetch
    * @param curl_code Set to the return value of the curl call
+   * @param data Encoded data buffer for sending, if applicable to the request
    * @param write_cb Callback to invoke as response data is received
    * @return Status
    */
@@ -313,6 +475,7 @@ class Curl {
       stats::Stats* stats,
       const char* url,
       CURLcode* curl_code,
+      BufferList* data,
       PostResponseCb&& write_cb) const;
 
   /**
@@ -321,6 +484,7 @@ class Curl {
    * @param stats The stats instance to record into
    * @param url URL to fetch
    * @param curl_code Set to the return value of the curl call
+   * @param data Encoded data buffer for sending, if applicable to the request
    * @param write_cb Callback to invoke as response data is received.
    * @param write_arg Opaque memory address passed to 'write_cb'.
    * @return Status
@@ -329,8 +493,38 @@ class Curl {
       stats::Stats* stats,
       const char* url,
       CURLcode* curl_code,
+      BufferList* data,
       size_t (*write_cb)(void*, size_t, size_t, void*),
       void* write_arg) const;
+
+  /**
+   * Instruments and then executes curl_easy_perform. Instrumentation
+   * is meant to provide crucial information on core-to-REST-server HTTP
+   * operations which is essential for analyzing and minimizing remote-request
+   * latencies. An indispensable counterpart to Jaeger tracing, while Jaeger
+   * tracing isn't enough to give us a full picture on all interactions in all
+   * contexts.
+   *
+   * Easiest instrumentation enable:
+   *     export TILEDB_CONFIG_LOGGING_LEVEL=5
+   *
+   * @param url URL to fetch.
+   * @param retry_number The time this request is being retried.
+   */
+  CURLcode curl_easy_perform_instrumented(
+      const char* const url, const uint8_t retry_number) const;
+
+  /**
+   * Set needed options on the curl request
+   *
+   * @param url URL to fetch
+   * @param write_cb Callback to invoke as response data is received.
+   * @param write_cb_state A data pointer to pass to the write callback.
+   */
+  void set_curl_request_options(
+      const char* const url,
+      size_t (*write_cb)(void*, size_t, size_t, void*),
+      WriteCbState& write_cb_state) const;
 
   /**
    * Check the given curl code for errors, returning a TileDB error status if
@@ -358,10 +552,18 @@ class Curl {
   /**
    * Checks the curl http status code to see if it matches a list of http
    * requests to retry
-   * @param retry true if the http code matches the retry list
-   * @return Status
+   * @param http_code http code to check
+   * @return true if should be retried, false otherwise
    */
-  Status should_retry(bool* retry) const;
+  bool should_retry_based_on_http_status(long http_code) const;
+
+  /**
+   * Checks the curl return code to see if the request should be retried
+   *
+   * @param curl_code the curl code to check
+   * @return retry or not
+   */
+  bool should_retry_based_on_curl_code(CURLcode curl_code) const;
 };
 
 }  // namespace sm

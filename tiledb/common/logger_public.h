@@ -28,15 +28,16 @@
  * @section DESCRIPTION
  *
  * This file defines simple logging functions that can be exposed (by expedient)
- * to the public API. Their implementations are in `logger.cc`. See the
- * documentation in `logger.h` for the full story.
+ * to the public API. Their implementations are in `logger.cc`. They are
+ * declared in a separate header from `logger.h` for historical reasons, when
+ * `logger.h` was leaking spdlog's headers.
  */
 
 #pragma once
 #ifndef TILEDB_LOGGER_PUBLIC_H
 #define TILEDB_LOGGER_PUBLIC_H
 
-#include "tiledb/common/status.h"
+#include "tiledb/common/exception/exception.h"
 
 namespace tiledb {
 namespace common {
@@ -61,8 +62,11 @@ void LOG_ERROR(const std::string& msg);
 /** Logs a status. */
 Status LOG_STATUS(const Status& st);
 
-/** Logs an error and exits with a non-zero status. */
-void LOG_FATAL(const std::string& msg);
+/** Logs a status without returning it. */
+void LOG_STATUS_NO_RETURN_VALUE(const Status& st);
+
+/** Logs a status exception. */
+void LOG_STATUS(const StatusException& st);
 
 /** Logs trace. */
 void LOG_TRACE(const std::stringstream& msg);
@@ -79,9 +83,6 @@ void LOG_WARN(const std::stringstream& msg);
 /** Logs an error. */
 void LOG_ERROR(const std::stringstream& msg);
 
-/** Logs an error and exits with a non-zero status. */
-void LOG_FATAL(const std::stringstream& msg);
-
 }  // namespace common
 
 /*
@@ -89,7 +90,6 @@ void LOG_FATAL(const std::stringstream& msg);
  */
 using common::LOG_DEBUG;
 using common::LOG_ERROR;
-using common::LOG_FATAL;
 using common::LOG_INFO;
 using common::LOG_STATUS;
 using common::LOG_TRACE;

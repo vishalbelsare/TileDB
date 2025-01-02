@@ -31,9 +31,11 @@ die() {
 }
 
 install_gcs(){
-    curl -L  https://github.com/googleapis/google-cloud-cpp/archive/v1.23.0.tar.gz > /tmp/google-cloud-cpp.tar.gz
-    tar -xf /tmp/google-cloud-cpp.tar.gz -C /tmp
-    pip3 install -r /tmp/google-cloud-cpp-1.23.0/google/cloud/storage/emulator/requirements.txt
+    git clone --branch v0.49.0 --depth 1 https://github.com/googleapis/storage-testbench.git /tmp/storage-testbench
+    # Create a virtual environment and keep it active
+    python3 -m venv /tmp/storage-testbench-venv
+    source /tmp/storage-testbench-venv/bin/activate
+    pip3 install -e /tmp/storage-testbench
 }
 
 install_apt_pkgs() {

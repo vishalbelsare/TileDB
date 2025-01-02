@@ -28,18 +28,23 @@
  * @section DESCRIPTION
  *
  * This file defines the tiledb ObjectType enum that maps to the
- * tiledb_object_type_t C-api enum
+ * tiledb_object_t C-api enum
  */
 
 #ifndef TILEDB_OBJECT_TYPE_H
 #define TILEDB_OBJECT_TYPE_H
+
+#include "tiledb/common/status.h"
+#include "tiledb/sm/misc/constants.h"
+
+using namespace tiledb::common;
 
 namespace tiledb {
 namespace sm {
 
 enum class ObjectType : uint8_t {
 #define TILEDB_OBJECT_TYPE_ENUM(id) id
-#include "tiledb/sm/c_api/tiledb_enum.h"
+#include "tiledb/api/c_api/object/object_api_enum.h"
 #undef TILEDB_OBJECT_TYPE_ENUM
 };
 
@@ -67,7 +72,7 @@ inline Status object_type_enum(
   else if (object_type_str == constants::object_type_array_str)
     *object_type = ObjectType::ARRAY;
   else
-    return Status::Error("Invalid ObjectType " + object_type_str);
+    return Status_Error("Invalid ObjectType " + object_type_str);
 
   return Status::Ok();
 }

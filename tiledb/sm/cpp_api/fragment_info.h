@@ -34,6 +34,7 @@
 #define TILEDB_CPP_API_FRAGMENT_INFO_H
 
 #include "array_schema.h"
+#include "capi_string.h"
 #include "context.h"
 #include "deleter.h"
 #include "exception.h"
@@ -82,20 +83,6 @@ class FragmentInfo {
         tiledb_fragment_info_load(ctx.ptr().get(), fragment_info_.get()));
   }
 
-  /** Loads the fragment info from an encrypted array. */
-  TILEDB_DEPRECATED
-  void load(
-      tiledb_encryption_type_t encryption_type,
-      const std::string& encryption_key) const {
-    auto& ctx = ctx_.get();
-    ctx.handle_error(tiledb_fragment_info_load_with_key(
-        ctx.ptr().get(),
-        fragment_info_.get(),
-        encryption_type,
-        encryption_key.data(),
-        (uint32_t)encryption_key.size()));
-  }
-
   /** Returns the URI of the fragment with the given index. */
   std::string fragment_uri(uint32_t fid) const {
     auto& ctx = ctx_.get();
@@ -103,6 +90,20 @@ class FragmentInfo {
     ctx.handle_error(tiledb_fragment_info_get_fragment_uri(
         ctx.ptr().get(), fragment_info_.get(), fid, &uri_c));
     return std::string(uri_c);
+  }
+
+  /** Returns the name of the fragment with the given index. */
+  std::string fragment_name(uint32_t fid) const {
+    auto& ctx = ctx_.get();
+    tiledb_string_t* name;
+    ctx.handle_error(tiledb_fragment_info_get_fragment_name_v2(
+        ctx.ptr().get(), fragment_info_.get(), fid, &name));
+    return impl::convert_to_string(&name).value();
+  }
+
+  /** Returns the context that the fragment info belongs to. */
+  const Context& context() const {
+    return ctx_;
   }
 
   /**
@@ -332,6 +333,15 @@ class FragmentInfo {
     return ret;
   }
 
+  /** Returns the total number of cells written in the loaded fragments. */
+  uint64_t total_cell_num() const {
+    auto& ctx = ctx_.get();
+    uint64_t ret;
+    ctx.handle_error(tiledb_fragment_info_get_total_cell_num(
+        ctx.ptr().get(), fragment_info_.get(), &ret));
+    return ret;
+  }
+
   /** Returns the version of the fragment with the given index. */
   uint32_t version(uint32_t fid) const {
     auto& ctx = ctx_.get();
@@ -398,16 +408,24 @@ class FragmentInfo {
     return std::string(uri_c);
   }
 
+#ifndef TILEDB_REMOVE_DEPRECATIONS
   /**
    * Dumps the fragment info in an ASCII representation to an output.
    *
    * @param out (Optional) File to dump output to. Defaults to `nullptr`
    * which will lead to selection of `stdout`.
    */
+  TILEDB_DEPRECATED
   void dump(FILE* out = nullptr) const {
     auto& ctx = ctx_.get();
     ctx.handle_error(
         tiledb_fragment_info_dump(ctx.ptr().get(), fragment_info_.get(), out));
+  }
+#endif
+
+  /** Returns the C TileDB context object. */
+  std::shared_ptr<tiledb_fragment_info_t> ptr() const {
+    return fragment_info_;
   }
 
  private:
@@ -424,6 +442,22 @@ class FragmentInfo {
   /** The C TileDB fragment info object. */
   std::shared_ptr<tiledb_fragment_info_t> fragment_info_;
 };
+
+/* ********************************* */
+/*               MISC                */
+/* ********************************* */
+
+/** Get a string representation of fragment info. */
+inline std::ostream& operator<<(std::ostream& os, const FragmentInfo& fi) {
+  tiledb_string_t* tdb_string;
+  auto& ctx = fi.context();
+  ctx.handle_error(tiledb_fragment_info_dump_str(
+      ctx.ptr().get(), fi.ptr().get(), &tdb_string));
+
+  os << impl::convert_to_string(&tdb_string).value();
+
+  return os;
+}
 
 }  // namespace tiledb
 

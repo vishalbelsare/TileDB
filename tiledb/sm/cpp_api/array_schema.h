@@ -36,6 +36,7 @@
 #define TILEDB_CPP_API_ARRAY_SCHEMA_H
 
 #include "attribute.h"
+#include "capi_string.h"
 #include "domain.h"
 #include "object.h"
 #include "schema_base.h"
@@ -134,65 +135,6 @@ class ArraySchema : public Schema {
   }
 
   /**
-   * Loads the schema of an existing encrypted array.
-   *
-   * **Example:**
-   * @code{.cpp}
-   * // Load AES-256 key from disk, environment variable, etc.
-   * uint8_t key[32] = ...;
-   * tiledb::Context ctx;
-   * tiledb::ArraySchema schema(ctx, "s3://bucket-name/array-name",
-   *    TILEDB_AES_256_GCM, key, sizeof(key));
-   * @endcode
-   *
-   * @param ctx TileDB context
-   * @param uri URI of array
-   * @param encryption_type The encryption type to use.
-   * @param encryption_key The encryption key to use.
-   * @param key_length Length in bytes of the encryption key.
-   */
-  TILEDB_DEPRECATED
-  ArraySchema(
-      const Context& ctx,
-      const std::string& uri,
-      tiledb_encryption_type_t encryption_type,
-      const void* encryption_key,
-      uint32_t key_length)
-      : Schema(ctx) {
-    tiledb_ctx_t* c_ctx = ctx.ptr().get();
-    tiledb_array_schema_t* schema;
-    ctx.handle_error(tiledb_array_schema_load_with_key(
-        c_ctx,
-        uri.c_str(),
-        encryption_type,
-        encryption_key,
-        key_length,
-        &schema));
-    schema_ = std::shared_ptr<tiledb_array_schema_t>(schema, deleter_);
-  }
-
-  /**
-   * Loads the schema of an existing encrypted array.
-   *
-   * @param ctx TileDB context
-   * @param uri URI of array
-   * @param encryption_type The encryption type to use.
-   * @param encryption_key The encryption key to use.
-   */
-  ArraySchema(
-      const Context& ctx,
-      const std::string& uri,
-      tiledb_encryption_type_t encryption_type,
-      const std::string& encryption_key)
-      : ArraySchema(
-            ctx,
-            uri,
-            encryption_type,
-            encryption_key.data(),
-            (uint32_t)encryption_key.size()) {
-  }
-
-  /**
    * Loads the schema of an existing array with the input C array
    * schema object.
    *
@@ -215,17 +157,19 @@ class ArraySchema : public Schema {
   /*                API                */
   /* ********************************* */
 
+#ifndef TILEDB_REMOVE_DEPRECATIONS
   /**
    * Dumps the array schema in an ASCII representation to an output.
    *
-   * @param out (Optional) File to dump output to. Defaults to `nullptr`
-   * which will lead to selection of `stdout`.
+   * @param out (Optional) File to dump output to. Defaults to `stdout`.
    */
-  void dump(FILE* out = nullptr) const override {
+  TILEDB_DEPRECATED
+  void dump(FILE* out = stdout) const override {
     auto& ctx = ctx_.get();
     ctx.handle_error(
         tiledb_array_schema_dump(ctx.ptr().get(), schema_.get(), out));
   }
+#endif
 
   /** Returns the array type. */
   tiledb_array_type_t array_type() const {
@@ -250,7 +194,7 @@ class ArraySchema : public Schema {
    *
    * @param capacity The capacity of a sparse data tile. Note that
    * sparse data tiles exist in sparse fragments, which can be created
-   * in both sparse and dense arrays. For more details,
+   * in sparse arrays only. For more details,
    * see [tutorials/tiling-sparse.html](tutorials/tiling-sparse.html).
    * @return Reference to this `ArraySchema` instance.
    */
@@ -280,6 +224,15 @@ class ArraySchema : public Schema {
     ctx.handle_error(tiledb_array_schema_set_allows_dups(
         ctx.ptr().get(), schema_.get(), allows_dups_i));
     return *this;
+  }
+
+  /** Returns the version of the array schema object. */
+  uint32_t version() const {
+    auto& ctx = ctx_.get();
+    uint32_t version;
+    ctx.handle_error(tiledb_array_schema_get_version(
+        ctx.ptr().get(), schema_.get(), &version));
+    return version;
   }
 
   /** Returns the tile order. */
@@ -392,6 +345,20 @@ class ArraySchema : public Schema {
   }
 
   /**
+   * Returns a copy of the FilterList of the validity arrays. To change the
+   * validity compressor, use `set_validity_filter_list()`.
+   *
+   * @return Copy of the validity FilterList.
+   */
+  FilterList validity_filter_list() const {
+    auto& ctx = ctx_.get();
+    tiledb_filter_list_t* filter_list;
+    ctx.handle_error(tiledb_array_schema_get_validity_filter_list(
+        ctx.ptr().get(), schema_.get(), &filter_list));
+    return FilterList(ctx, filter_list);
+  }
+
+  /**
    * Sets the FilterList for the offsets, which is an ordered list of
    * filters that will be used to process and/or transform the offsets data
    * (such as compression).
@@ -412,6 +379,31 @@ class ArraySchema : public Schema {
   ArraySchema& set_offsets_filter_list(const FilterList& filter_list) {
     auto& ctx = ctx_.get();
     ctx.handle_error(tiledb_array_schema_set_offsets_filter_list(
+        ctx.ptr().get(), schema_.get(), filter_list.ptr().get()));
+    return *this;
+  }
+
+  /**
+   * Sets the FilterList for the validity arrays, which is an ordered list of
+   * filters that will be used to process and/or transform the validity data
+   * (such as compression).
+   *
+   * **Example:**
+   * @code{.cpp}
+   * tiledb::Context ctx;
+   * tiledb::ArraySchema schema(ctx.ptr().get(), TILEDB_SPARSE);
+   * tiledb::FilterList filter_list(ctx);
+   * filter_list.add_filter({ctx, TILEDB_FILTER_POSITIVE_DELTA})
+   *     .add_filter({ctx, TILEDB_FILTER_LZ4});
+   * schema.set_validity_filter_list(filter_list);
+   * @endcode
+   *
+   * @param filter_list FilterList to use
+   * @return Reference to this `ArraySchema` instance.
+   */
+  ArraySchema& set_validity_filter_list(const FilterList& filter_list) {
+    auto& ctx = ctx_.get();
+    ctx.handle_error(tiledb_array_schema_set_validity_filter_list(
         ctx.ptr().get(), schema_.get(), filter_list.ptr().get()));
     return *this;
   }
@@ -450,6 +442,26 @@ class ArraySchema : public Schema {
     ctx.handle_error(tiledb_array_schema_set_domain(
         ctx.ptr().get(), schema_.get(), domain.ptr().get()));
     return *this;
+  }
+
+  /**
+   * Get timestamp range of schema.
+   *
+   * **Example:**
+   * @code{.cpp}
+   * tiledb::Context ctx;
+   * tiledb::ArraySchema schema(ctx.ptr().get(), TILEDB_SPARSE);
+   * std::pair<uint64_t, uint64_t> timestamp_range = schema.timestamp_range();
+   * @endcode
+   *
+   * @return Timestamp range of this `ArraySchema` instance.
+   */
+  std::pair<uint64_t, uint64_t> timestamp_range() {
+    auto& ctx = ctx_.get();
+    uint64_t lo, hi;
+    ctx.handle_error(tiledb_array_schema_timestamp_range(
+        ctx.ptr().get(), schema_.get(), &lo, &hi));
+    return {lo, hi};
   }
 
   /**
@@ -618,13 +630,14 @@ class ArraySchema : public Schema {
 
 /** Converts the array schema into a string representation. */
 inline std::ostream& operator<<(std::ostream& os, const ArraySchema& schema) {
-  os << "ArraySchema<";
-  os << tiledb::ArraySchema::to_str(schema.array_type());
-  os << ' ' << schema.domain();
-  for (const auto& a : schema.attributes()) {
-    os << ' ' << a.second;
-  }
-  os << '>';
+  auto& ctx = schema.context();
+  tiledb_string_t* tdb_string;
+
+  ctx.handle_error(tiledb_array_schema_dump_str(
+      ctx.ptr().get(), schema.ptr().get(), &tdb_string));
+
+  os << impl::convert_to_string(&tdb_string).value();
+
   return os;
 }
 
